@@ -52,6 +52,8 @@ li .m em{color:var(--warn);font-style:normal}
 li .in{font-weight:600;color:var(--g);font-size:14px;white-space:nowrap}
 li.sel{background:rgba(140,198,63,.1);border-radius:10px}
 .btn{display:block;width:100%;border:1px solid var(--line);background:transparent;color:var(--mut);padding:10px;border-radius:12px;font:600 13px inherit;margin-top:10px;cursor:pointer}
+.status{border-color:var(--g2);background:linear-gradient(180deg,rgba(140,198,63,.12),var(--card))}
+.status .big2{font-size:22px;font-weight:700;margin-top:4px}
 footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-height:1.5}
 </style>
 </head>
@@ -65,6 +67,7 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
 </div>
 <div class="hint" id="dirHint"></div>
 
+<div id="status" class="card status" style="display:none"></div>
 <section class="card mapwrap">
   <svg id="map" viewBox="0 0 340 400" aria-label="Mapa do percurso"></svg>
   <div class="where"><span class="pill" id="where">—</span><span class="pill off" id="mode">sem GPS</span></div>
@@ -96,6 +99,19 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
   <div class="lbl" id="nextLbl">Próximas partidas</div>
   <ul id="next"></ul>
   <button class="btn" id="more">Ver todas de hoje</button>
+</section>
+
+<section class="card">
+  <div class="lbl">As minhas paragens</div>
+  <div class="sub" style="font-size:13px;margin:6px 0 10px">Quando estiveres mesmo na paragem, toca no botão certo. A app passa a saber que estás à espera e deteta sozinha quando entras no autocarro.</div>
+  <div class="links" style="flex-direction:column">
+    <button data-stop="b">📍 Estou na paragem do Bombarral — gravar</button>
+    <button data-stop="c">📍 Estou na paragem do Campo Grande — gravar</button>
+  </div>
+  <div class="sub" id="stopsInfo" style="font-size:12px;margin-top:10px"></div>
+  <div class="lbl" style="margin-top:14px">Últimas viagens</div>
+  <div class="sub" id="histInfo" style="font-size:13px;margin-top:6px"></div>
+  <button class="btn" id="endTrip" style="display:none">Não estou no autocarro — cancelar viagem</button>
 </section>
 
 <footer>Horários RDO em vigor desde 01/10/2025. A estimativa junta a tua velocidade real (GPS) com o trânsito típico de cada troço à hora atual. Para trânsito em direto, o botão abre o Waze.<br>Toca numa partida quando entrares no autocarro.</footer>
@@ -171,8 +187,51 @@ function modelMinutes(kmFrom,kmTo,d,h,fds){
   return{t,slow};
 }
 
+// ---- Paragens e deteção de embarque
+const DEF_STOPS={b:[39.2675,-9.1555],c:[38.7598,-9.1578]};
+const STOP_NAME={b:"Bombarral",c:"Campo Grande"};
+let stops=(()=>{try{return JSON.parse(localStorage.getItem("rv_stops"))||{}}catch(e){return{}}})();
+let atStop=null, lastAt=(()=>{try{return JSON.parse(localStorage.getItem("rv_lastAt"))}catch(e){return null}})();
+let active=(()=>{try{return JSON.parse(localStorage.getItem("rv_trip"))}catch(e){return null}})();
+const save=(k,v)=>{try{v==null?localStorage.removeItem(k):localStorage.setItem(k,JSON.stringify(v))}catch(e){}};
+const stopPos=s=>stops[s]?stops[s].p:DEF_STOPS[s];
+const stopR=s=>stops[s]?Math.max(80,Math.min(200,(stops[s].acc||30)*2)):400; // metros
+function svcMin(ts){const d=new Date(ts);let m=d.getHours()*60+d.getMinutes()+d.getSeconds()/60;if(m<180)m+=1440;return m}
+function svcFds(ts){const d=new Date(ts);if(d.getHours()<3)d.setDate(d.getDate()-1);const wd=d.getDay();return wd===0||wd===6||FERIADOS.has(iso(d))}
+function matchTrip(d,ts){ // horário mais provável para quem saiu da paragem em ts
+  const m=svcMin(ts),L=trips(d,svcFds(ts)).filter(x=>x.dep>=m-45&&x.dep<=m+5);
+  if(!L.length)return null;return L.reduce((a,b)=>Math.abs(m-b.dep)<Math.abs(m-a.dep)?b:a);
+}
+function updateStops(){
+  if(!gps.pos||sim)return;
+  const now=Date.now();
+  atStop=null;
+  for(const s of ["b","c"]){if(hav(gps.pos,stopPos(s))*1000<=stopR(s))atStop=s}
+  if(atStop){
+    // chegou ao destino da viagem ativa?
+    if(active&&((active.dir==="ida"&&atStop==="c")||(active.dir==="volta"&&atStop==="b"))){
+      const h=(()=>{try{return JSON.parse(localStorage.getItem("rv_hist"))||[]}catch(e){return[]}})();
+      h.unshift({dir:active.dir,dep:active.dep,left:active.left,arr:now});save("rv_hist",h.slice(0,40));
+      active=null;save("rv_trip",null);
+    }
+    lastAt={s:atStop,t:now};save("rv_lastAt",lastAt);return;
+  }
+  // saiu da paragem e está em movimento → entrou no autocarro
+  if(!active&&lastAt&&now-lastAt.t<60*60e3){
+    const away=hav(gps.pos,stopPos(lastAt.s))*1000, v=speedNow();
+    if(away>700||(away>350&&v!=null&&v>15)){
+      const d=lastAt.s==="b"?"ida":"volta", tr=matchTrip(d,lastAt.t);
+      active={dir:d,dep:tr?tr.dep:null,left:lastAt.t,fds:svcFds(lastAt.t)};save("rv_trip",active);
+      manualDir=null;
+    }
+  }
+  if(active&&now-active.left>3*3600e3){active=null;save("rv_trip",null)}
+}
+
 function decideDir(){
   if(sim){dir=sim.dir;dirSource="simulação";return}
+  if(active){dir=active.dir;dirSource=active.dep!=null?"no autocarro das "+fmt(active.dep):"em viagem";return}
+  if(atStop){dir=atStop==="b"?"ida":"volta";dirSource="estás na paragem de "+STOP_NAME[atStop];return}
   if(manualDir){dir=manualDir;dirSource="escolhido por ti";return}
   if(gps.pos){const pr=project(gps.pos);
     if(pr.km<3){dir="ida";dirSource="detetado: estás no Bombarral";return}
@@ -190,7 +249,9 @@ function speedNow(){ // km/h
 function avgSpeed(){if(sim)return sim.avg;if(gps.hist.length<2)return null;const a=gps.hist[0],b=gps.hist[gps.hist.length-1];const h=(b.t-a.t)/3.6e6;if(h<=0.02)return null;const v=Math.abs(project(b.p).km-project(a.p).km)/h;return v>160?null:v}
 
 function render(){
+  updateStops();
   decideDir();
+  renderStatus();
   document.querySelectorAll("#dir button").forEach(b=>b.classList.toggle("on",b.dataset.d===dir));
   const S=serviceNow(),list=trips(dir,S.fds);
   const dest=dir==="ida"?"Campo Grande":"Bombarral",destP=dir==="ida"?ROUTE[ROUTE.length-1]:ROUTE[0];
@@ -219,7 +280,8 @@ function render(){
 
   // Viagem atual (escolhida, ou deduzida pelo GPS)
   let trip=null;
-  if(pickedDep!=null){trip=list.find(t=>t.dep===pickedDep)||null;if(trip&&S.mins>trip.arr+30){trip=null;pickedDep=null}}
+  if(active&&active.dep!=null&&!sim){trip=list.find(t=>t.dep===active.dep)||null}
+  if(!trip&&pickedDep!=null){trip=list.find(t=>t.dep===pickedDep)||null;if(trip&&S.mins>trip.arr+30){trip=null;pickedDep=null}}
   if(!trip&&pos&&done>3&&left>1){const on=list.filter(t=>t.dep<=S.mins&&t.arr+15>S.mins);if(on.length)trip=on.reduce((b,t)=>Math.abs((S.mins-t.dep)/(t.arr-t.dep)-done/ROAD_KM)<Math.abs((S.mins-b.dep)/(b.arr-b.dep)-done/ROAD_KM)?t:b)}
 
   // Estimativa
@@ -256,6 +318,32 @@ function render(){
     return `<li data-dep="${t.dep}" class="${trip&&trip.dep===t.dep?"sel":""}" style="${t.arr<=S.mins?"opacity:.4":""}"><span class="t">${fmt(t.dep)}</span><span class="m">chega ${fmt(t.arr)}${t.n?` · <em>${t.n}</em>`:""}</span><span class="in">${inTxt}</span></li>`}).join("");
   document.getElementById("more").textContent=showAll?"Mostrar só as próximas":"Ver todas de hoje";
 }
+
+function renderStatus(){
+  const el=document.getElementById("status"),S=serviceNow();
+  if(active&&!sim){
+    const late=active.dep!=null?Math.round(svcMin(active.left)-active.dep):null;
+    el.innerHTML=`<div class="lbl">🚌 Estás no autocarro</div><div class="big2">${active.dep!=null?"Rápida Verde das "+fmt(active.dep):"Autocarro fora do horário"}</div><div class="sub">Saíste da paragem às ${fmt(svcMin(active.left))}${late!=null&&late>1?` · partiu ${late} min atrasado`:late!=null?" · partiu a horas":""}</div>`;
+    el.style.display="";
+  }else if(atStop&&!sim){
+    const d=atStop==="b"?"ida":"volta",nx=trips(d,S.fds).find(x=>x.dep>=S.mins-2);
+    el.innerHTML=`<div class="lbl">📍 Estás na paragem de ${STOP_NAME[atStop]}</div><div class="big2">${nx?`Próximo às ${fmt(nx.dep)} · ${nx.dep-S.mins<=0?"deve estar a chegar":"em "+Math.ceil(nx.dep-S.mins)+" min"}`:"Sem mais autocarros hoje"}</div><div class="sub">Quando entrares e o autocarro arrancar, a app deteta sozinha.</div>`;
+    el.style.display="";
+  }else el.style.display="none";
+  document.getElementById("endTrip").style.display=active?"":"none";
+  const inf=s=>stops[s]?`gravada (±${Math.round(stops[s].acc||0)} m)`:"aproximada — grava quando lá estiveres";
+  document.getElementById("stopsInfo").textContent=`Bombarral: ${inf("b")} · Campo Grande: ${inf("c")}`;
+  let h=[];try{h=JSON.parse(localStorage.getItem("rv_hist"))||[]}catch(e){}
+  document.getElementById("histInfo").innerHTML=h.length?h.slice(0,5).map(x=>{const dur=Math.round((x.arr-x.left)/60000);return `${x.dir==="ida"?"→ Lisboa":"→ Bombarral"} · ${x.dep!=null?fmt(x.dep):"?"} · saiu ${fmt(svcMin(x.left))} · chegou ${fmt(svcMin(x.arr))} · <b>${dur} min</b>`}).join("<br>"):"Ainda nenhuma. Ficam registadas automaticamente.";
+}
+document.querySelectorAll("[data-stop]").forEach(b=>b.addEventListener("click",()=>{
+  const s=b.dataset.stop;
+  if(!gps.pos){b.textContent="⚠️ Sem GPS — espera pelo sinal e tenta outra vez";return}
+  stops[s]={p:gps.pos,acc:gps.acc||30,t:Date.now()};save("rv_stops",stops);
+  b.textContent=`✓ Paragem ${STOP_NAME[s]} gravada (±${Math.round(gps.acc||0)} m)`;
+  lastAt={s,t:Date.now()};save("rv_lastAt",lastAt);render();
+}));
+document.getElementById("endTrip").addEventListener("click",()=>{active=null;save("rv_trip",null);lastAt=null;save("rv_lastAt",null);render()});
 
 // ---- Eventos
 document.getElementById("dir").addEventListener("click",e=>{const b=e.target.closest("button");if(!b||sim)return;manualDir=b.dataset.d;pickedDep=null;store.set("rv_dir",manualDir);store.set("rv_dir_t",String(Date.now()));render()});
@@ -295,7 +383,7 @@ function startGPS(){
   if(!navigator.geolocation){gps.err={code:0};render();return}
   if(gpsWatch!=null)try{navigator.geolocation.clearWatch(gpsWatch)}catch(e){}
   const ok=p=>{
-    gps.pos=[p.coords.latitude,p.coords.longitude];gps.err=null;
+    gps.pos=[p.coords.latitude,p.coords.longitude];gps.acc=p.coords.accuracy;gps.err=null;
     if(p.coords.speed!=null&&p.coords.speed>=0&&p.coords.speed<45){gps.lastSpeed=p.coords.speed*3.6;gps.lastSpeedT=Date.now()}
     gps.hist.push({p:gps.pos,t:p.timestamp});gps.hist=gps.hist.filter(h=>p.timestamp-h.t<10*60e3);
     if(!sim)render()};
