@@ -86,7 +86,16 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
   <div class="stat"><div class="lbl">Faltam</div><div class="v" id="kmLeft">–<small>km</small></div><div class="s" id="kmDone">feitos: –</div></div>
 </div>
 
-<a class="metro" href="https://www.metrolisboa.pt/viajar/proximoscomboios/?estacao=CG" target="_blank" rel="noopener"><span class="mdot">M</span><span class="mtxt"><b>Metro · Linha Amarela em Campo Grande</b><span id="metroSub">Próximos comboios em tempo real</span></span><span class="marr">›</span></a>
+<div class="metro" id="metroCard" style="flex-direction:column;align-items:stretch">
+  <div style="display:flex;align-items:center;gap:12px">
+    <span class="mdot">M</span><span class="mtxt"><b>Metro · Linha Amarela em Campo Grande</b><span id="metroSub">Próximos comboios em tempo real</span></span>
+    <button id="metroTog" class="btn" style="width:auto;margin:0;padding:8px 12px">Ver aqui</button>
+  </div>
+  <div id="metroBox" style="display:none;margin-top:10px">
+    <iframe id="metroFrame" title="Próximos comboios Campo Grande" style="width:100%;height:520px;border:0;border-radius:12px;background:#fff" loading="lazy" referrerpolicy="no-referrer"></iframe>
+    <div class="sub" style="font-size:12px;margin-top:6px">Se ficar em branco, o site do Metro não deixa mostrar aqui: <a href="https://www.metrolisboa.pt/viajar/proximoscomboios/?estacao=CG" target="_blank" rel="noopener" style="color:var(--g)">abrir no site do Metro</a>.</div>
+  </div>
+</div>
 <div class="links" style="margin-bottom:12px">
   <button id="sim">▶ Simular viagem</button>
 </div>
@@ -263,6 +272,7 @@ function avgSpeed(){if(sim)return sim.avg;if(gps.hist.length<2)return null;const
 function render(){
   updateStops();
   decideDir();
+  try{metroAutoCheck()}catch(e){}
   renderStatus();
   document.querySelectorAll("#dir button").forEach(b=>b.classList.toggle("on",b.dataset.d===dir));
   const S=serviceNow(),list=trips(dir,S.fds);
@@ -374,13 +384,23 @@ async function loadLive(){
   const d=active?active.dir:(atStop?(atStop==="b"?"ida":"volta"):dir);
   const from=gps.pos||(d==="ida"?stopPos("b"):stopPos("c")), to=d==="ida"?stopPos("c"):stopPos("b");
   if(hav(from,to)<1)return;
-  try{
-    const u=`https://api.tomtom.com/routing/1/calculateRoute/${from[0]},${from[1]}:${to[0]},${to[1]}/json?key=${encodeURIComponent(k)}&traffic=true&computeTravelTimeFor=all&sectionType=traffic`;
-    const r=await fetch(u);if(!r.ok)throw new Error(r.status);const j=await r.json();const rt=j.routes[0],s=rt.summary;
-    const nt=s.noTrafficTravelTimeInSeconds||s.travelTimeInSeconds;
-    let inc="";try{const tr=(rt.sections||[]).filter(x=>x.sectionType==="TRAFFIC");if(tr.some(x=>/ACCIDENT/i.test(x.simpleCategory||"")))inc="acidente";else if(tr.some(x=>/ROAD_WORK/i.test(x.simpleCategory||"")))inc="obras";else if(tr.some(x=>/ROAD_CLOSURE|CLOSED/i.test(x.simpleCategory||"")))inc="estrada cortada"}catch(e){}
-    live={f:s.travelTimeInSeconds/nt,delay:(s.trafficDelayInSeconds||0)/60,inc,t:Date.now(),ok:true};
-  }catch(e){live={err:String(e.message||e),t:Date.now()}}
+  const findSum=o=>{if(!o||typeof o!=="object")return null;if("travelTimeInSeconds" in o)return o;for(const k in o){const r=findSum(o[k]);if(r)return r}return null};
+  const urls=[
+    `https://api.tomtom.com/routing/1/calculateRoute/${from[0]},${from[1]}:${to[0]},${to[1]}/json?key=${encodeURIComponent(k)}&traffic=true&computeTravelTimeFor=all&sectionType=traffic`,
+    `https://api.tomtom.com/maps/orbis/routing/calculateRoute/${from[0]},${from[1]}:${to[0]},${to[1]}/json?apiVersion=2&key=${encodeURIComponent(k)}`
+  ];
+  let lastErr="";
+  for(const u of urls){
+    try{
+      const r=await fetch(u);if(!r.ok)throw new Error("HTTP "+r.status);const j=await r.json();
+      const s=findSum(j);if(!s)throw new Error("resposta sem tempos");
+      const nt=s.noTrafficTravelTimeInSeconds||s.historicTrafficTravelTimeInSeconds||(s.travelTimeInSeconds-(s.trafficDelayInSeconds||0));
+      let inc="";try{const txt=JSON.stringify(j);if(/ACCIDENT/i.test(txt))inc="acidente";else if(/ROAD_?WORK/i.test(txt))inc="obras";else if(/ROAD_?CLOSURE|CLOSED/i.test(txt))inc="estrada cortada"}catch(e){}
+      live={f:s.travelTimeInSeconds/Math.max(1,nt),delay:(s.trafficDelayInSeconds||Math.max(0,s.travelTimeInSeconds-nt))/60,inc,t:Date.now(),ok:true};
+      render();return;
+    }catch(e){lastErr=String(e.message||e)}
+  }
+  live={err:lastErr,t:Date.now()};
   render();
 }
 
@@ -411,6 +431,16 @@ document.querySelectorAll("[data-stop]").forEach(b=>b.addEventListener("click",(
 }));
 document.getElementById("ttSave").addEventListener("click",()=>{const v=document.getElementById("ttIn").value.trim();try{v?localStorage.setItem("rv_tt",v):localStorage.removeItem("rv_tt")}catch(e){}document.getElementById("ttIn").value="";live=null;render();loadLive()});
 document.getElementById("endTrip").addEventListener("click",()=>{active=null;save("rv_trip",null);lastAt=null;save("rv_lastAt",null);render()});
+
+const METRO_URL="https://www.metrolisboa.pt/viajar/proximoscomboios/?estacao=CG";
+let metroOpen=false,metroAuto=false;
+function setMetro(open){metroOpen=open;const f=document.getElementById("metroFrame");document.getElementById("metroBox").style.display=open?"":"none";document.getElementById("metroTog").textContent=open?"Fechar":"Ver aqui";if(open&&!f.src)f.src=METRO_URL;if(open)f.src=METRO_URL}
+document.getElementById("metroTog").addEventListener("click",()=>{metroAuto=true;setMetro(!metroOpen)});
+setInterval(()=>{if(metroOpen)document.getElementById("metroFrame").src=METRO_URL},60e3);
+function metroAutoCheck(){ // abre sozinho a menos de 8 km do Campo Grande, na ida
+  if(metroAuto||sim||!gps.pos)return;
+  if(dir==="ida"&&hav(gps.pos,stopPos("c"))<8){metroAuto=true;setMetro(true)}
+}
 
 // ---- Eventos
 document.getElementById("dir").addEventListener("click",e=>{const b=e.target.closest("button");if(!b||sim)return;manualDir=b.dataset.d;pickedDep=null;store.set("rv_dir",manualDir);store.set("rv_dir_t",String(Date.now()));render()});
