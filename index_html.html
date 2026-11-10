@@ -70,6 +70,12 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
   <div class="where"><span class="pill" id="where">—</span><span class="pill off" id="mode">sem GPS</span></div>
 </section>
 
+<div id="gpsHelp" class="card" style="display:none;font-size:14px;line-height:1.5">
+<b>O iPhone está a bloquear a localização.</b><br>
+1. Definições → Privacidade e segurança → Serviços de localização → <b>Sites do Safari</b> → <b>Durante a utilização</b> (e "Localização exata" ligada).<br>
+2. No Safari, toca em <b>☰</b> junto ao endereço → Definições do site → Localização → <b>Permitir</b>.<br>
+3. Atualiza a página e toca em "Permitir" no aviso.
+</div>
 <div class="stats">
   <div class="stat eta"><div class="lbl">Chegada estimada a <span id="destName"></span><span class="tag" id="traffic"></span></div>
     <div class="v" id="eta">--:--</div>
@@ -197,7 +203,7 @@ function render(){
   // Posição
   const pos=sim?pointAt(sim.km):gps.pos;
   const mode=document.getElementById("mode");
-  if(sim){mode.textContent="simulação";mode.className="pill sim"}else if(gps.pos){mode.textContent="● GPS em direto";mode.className="pill live"}else{mode.textContent=gps.err?"sem GPS":"a procurar GPS…";mode.className="pill off"}
+  if(sim){mode.textContent="simulação";mode.className="pill sim"}else if(gps.pos){mode.textContent="● GPS em direto";mode.className="pill live"}else{mode.textContent=gpsMsg(gps.err);mode.className="pill off"}
   const pr=pos?project(pos):null;
   const kmFromB=pr?pr.km:(dir==="ida"?0:ROAD_KM);
   const done=dir==="ida"?kmFromB:ROAD_KM-kmFromB, left=ROAD_KM-done;
@@ -275,11 +281,36 @@ document.getElementById("sim").addEventListener("click",()=>{
 });
 
 // GPS
-if(navigator.geolocation){try{navigator.geolocation.watchPosition(p=>{
-  gps.pos=[p.coords.latitude,p.coords.longitude];gps.err=null;
-  if(p.coords.speed!=null&&p.coords.speed>=0&&p.coords.speed<45){gps.lastSpeed=p.coords.speed*3.6;gps.lastSpeedT=Date.now()}
-  gps.hist.push({p:gps.pos,t:p.timestamp});gps.hist=gps.hist.filter(h=>p.timestamp-h.t<10*60e3);
-  if(!sim)render()},()=>{gps.err=true;render()},{enableHighAccuracy:true,maximumAge:5000,timeout:20000})}catch(e){gps.err=true}}else gps.err=true;
+let gpsWatch=null;
+function gpsMsg(e){
+  if(!window.isSecureContext)return "precisa de https";
+  if(!navigator.geolocation)return "browser sem GPS";
+  if(!e)return "a procurar GPS…";
+  if(e.code===1)return "GPS recusado (toca para ver)";
+  if(e.code===2)return "sem sinal GPS";
+  if(e.code===3)return "GPS a demorar…";
+  return "erro GPS";
+}
+function startGPS(){
+  if(!navigator.geolocation){gps.err={code:0};render();return}
+  if(gpsWatch!=null)try{navigator.geolocation.clearWatch(gpsWatch)}catch(e){}
+  const ok=p=>{
+    gps.pos=[p.coords.latitude,p.coords.longitude];gps.err=null;
+    if(p.coords.speed!=null&&p.coords.speed>=0&&p.coords.speed<45){gps.lastSpeed=p.coords.speed*3.6;gps.lastSpeedT=Date.now()}
+    gps.hist.push({p:gps.pos,t:p.timestamp});gps.hist=gps.hist.filter(h=>p.timestamp-h.t<10*60e3);
+    if(!sim)render()};
+  const bad=e=>{gps.err=e;if(!gps.pos)render()};
+  try{
+    navigator.geolocation.getCurrentPosition(ok,bad,{enableHighAccuracy:false,maximumAge:60000,timeout:15000});
+    gpsWatch=navigator.geolocation.watchPosition(ok,bad,{enableHighAccuracy:true,maximumAge:5000,timeout:30000});
+  }catch(e){gps.err={code:0};render()}
+}
+document.getElementById("mode").style.pointerEvents="auto";
+document.getElementById("mode").addEventListener("click",()=>{
+  if(gps.err&&gps.err.code===1)document.getElementById("gpsHelp").style.display="block";
+  startGPS();
+});
+startGPS();
 render();setInterval(()=>{if(!sim)render()},15000);
 </script>
 </body>
