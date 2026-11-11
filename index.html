@@ -439,7 +439,7 @@ async function clBoard(id){
   await loadCL();const f=await clFile("s/"+id+".json");const now=Date.now(),L=[];
   [1,0].forEach(back=>{const D=new Date();D.setHours(0,0,0,0);D.setDate(D.getDate()-back);const on=new Set(CLC[iso(D)]||[]),d0=D.getTime();
     f.d.forEach(e=>{if(!on.has(e[5]))return;const ts=d0+e[0]*60000;if(ts<now-60e3||ts>now+4*3600e3)return;
-      L.push({ts,line:e[1],dest:f.h[e[2]],p:e[3],ti:e[4],i:e[6],key:e[3]+":"+e[4]+":"+back})})});
+      const dest=f.h[e[2]];L.push({ts,line:e[1],dest,circ:norm(dest)===norm(clNome(id)),p:e[3],ti:e[4],i:e[6],key:e[3]+":"+e[4]+":"+back})})});
   L.sort((a,b)=>a.ts-b.ts);return{L,t:now};
 }
 async function clStops(r){
@@ -456,7 +456,7 @@ function clRowsHTML(b,max=12,filtro="",aberto=""){
   return L.slice(0,max).map(r=>{const d=(r.ts-Date.now())/60000,c=chega(r),open=aberto===r.key;
     const chH=typeof c==="number"?`<div style="margin-top:3px;font-size:14px;color:var(--g);font-weight:600">→ ${esc(filtro)} às ${hm(new Date(c))} <span class="sub">· ${Math.round((c-r.ts)/60000)} min de viagem · chegas daqui a ${Math.max(0,Math.round((c-Date.now())/60000))} min</span></div>`:"";
     const lista=open?(r.stops?`<div style="margin:6px 0 4px 56px;border-left:3px solid var(--line);padding-left:10px">${r.stops.map(s=>`<div class="tap" data-stop="${esc(s.nome)}" style="display:flex;gap:10px;padding:5px 0;font-size:14px;${norm(s.nome)===k?"color:var(--g);font-weight:700":""}"><span style="font-variant-numeric:tabular-nums;min-width:44px">${hm(new Date(s.ts))}</span><span style="flex:1">${esc(s.nome)}</span></div>`).join("")}<div class="sub" style="font-size:11px">Toca numa paragem para a escolheres como destino.</div></div>`:`<div class="sub" style="margin:4px 0 6px 56px">${r.stopsErr?"Não consegui obter as paragens.":"A carregar paragens…"}</div>`):"";
-    return `<div class="row tap" data-train="${esc(r.key)}" style="flex-wrap:wrap">${clBadge(r.line)}<span class="m"><b>${esc(r.dest)}</b><small>horário</small>${chH}</span>
+    return `<div class="row tap" data-train="${esc(r.key)}" style="flex-wrap:wrap">${clBadge(r.line)}<span class="m"><b>${r.circ?"↻ Circular":esc(r.dest)}</b><small>${r.circ&&(CLR||{})[r.line]?.[3]?esc(CLR[r.line][3])+" · ":""}horário</small>${chH}</span>
       <span class="in">${d<1?"a sair":d<90?Math.round(d)+" min":""}<small>${hm(new Date(r.ts))} ${open?"▴":"▾"}</small></span>${lista?`<div style="flex-basis:100%">${lista}</div>`:""}</div>`}).join("")+(fora?`<div class="sub" style="padding:6px 4px">${fora} ${fora===1?"partida não passa":"partidas não passam"} em ${esc(filtro)}.</div>`:"");
 }
 function clSearch(){
