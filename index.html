@@ -2,13 +2,21 @@
 <html lang="pt-PT">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Rápida Verde">
+<meta name="theme-color" content="#0f1512">
+<link rel="manifest" href="manifest.json">
+<link rel="apple-touch-icon" href="apple-touch-icon.png">
+<link rel="icon" href="icon-192.png">
 <title>Rápida Verde · Bombarral ⇄ Campo Grande</title>
 <style>
 :root{--bg:#0f1512;--card:#18211c;--line:#26332b;--txt:#eef3ef;--mut:#93a39a;--g:#8cc63f;--g2:#5e8f22;--warn:#f0b44c;--red:#ef6b5b}
 *{box-sizing:border-box}
 body{margin:0;background:var(--bg);color:var(--txt);font:16px/1.4 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;-webkit-font-smoothing:antialiased}
-main{max-width:480px;margin:0 auto;padding:14px 14px 40px}
+main{max-width:480px;margin:0 auto;padding:calc(14px + env(safe-area-inset-top)) calc(14px + env(safe-area-inset-right)) calc(40px + env(safe-area-inset-bottom)) calc(14px + env(safe-area-inset-left))}
 h1{font-size:15px;font-weight:600;color:var(--mut);margin:4px 0 12px}
 h1 b{color:var(--g)}
 .seg{display:flex;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px}
@@ -629,6 +637,7 @@ startGPS();
 loadWx();setInterval(loadWx,15*60e3);loadStations().then(loadMetro);document.getElementById("mChips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const map={CG:"Campo Grande",EC:"Entre Campos",RA:"Rato"};mManual=b.dataset.s?(AMARELA.find(s=>s.nome===map[b.dataset.s])||{}).id||b.dataset.s:null;metro=null;renderMetro();loadMetro()});setInterval(()=>{if(!document.hidden)loadMetro()},30e3);document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadMetro()});
 setTimeout(loadLive,3000);setInterval(loadLive,2*60e3);
 render();setInterval(()=>{if(!sim)render()},15000);
+if("serviceWorker" in navigator&&location.protocol==="https:"){navigator.serviceWorker.register("sw.js").catch(()=>{})}
 </script>
 </body>
 </html>
