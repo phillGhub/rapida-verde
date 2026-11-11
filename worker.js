@@ -66,6 +66,29 @@ export default {
         return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
       }
     }
+    if (u.searchParams.get("varias")) {
+      // Tempos de várias estações de uma vez (para o mapa da linha)
+      const ids = u.searchParams.get("varias").toUpperCase().split(",").map(s => s.replace(/[^A-Z]/g, "").slice(0, 3)).filter(Boolean).slice(0, 20);
+      try {
+        const t1 = await token(env);
+        const res = await Promise.all(ids.map(async id => {
+          try {
+            const r = await fetch(`${API}/estadoServicoML/1.0.1/tempoEspera/Estacao/${id}`, { headers: { Authorization: "Bearer " + t1 } });
+            const j = await r.json();
+            if (!Array.isArray(j.resposta)) return { id, cais: [] };
+            return { id, cais: j.resposta.map(x => ({
+              linha: LINHA[String(x.comboio || "").slice(-1)] || "?",
+              destino: DEST[x.destino] || String(x.destino),
+              comboios: [[x.comboio, x.tempoChegada1], [x.comboio2, x.tempoChegada2], [x.comboio3, x.tempoChegada3]]
+                .filter(p => p[0] && !isNaN(Number(p[1]))).map(p => ({ id: String(p[0]), s: Number(p[1]) }))
+            })) };
+          } catch (e) { return { id, cais: [], erro: String(e.message || e) }; }
+        }));
+        return new Response(JSON.stringify({ ok: true, atualizado: new Date().toISOString(), estacoes: res, estado: await estadoLinhas(env) }), { headers });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
+      }
+    }
     const est = (new URL(req.url).searchParams.get("estacao") || "CG").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
     try {
       const pedir = t => fetch(`${API}/estadoServicoML/1.0.1/tempoEspera/Estacao/${est}`, { headers: { Authorization: "Bearer " + t } });

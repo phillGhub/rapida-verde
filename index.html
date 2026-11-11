@@ -94,6 +94,11 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
   </div>
   <div style="font-size:12px;color:var(--mut);margin-top:10px">Onde estás?</div><div class="seg" id="mChips" style="margin-top:4px;padding:3px"><button data-s="CG">Campo Grande</button><button data-s="EC">Entre Campos</button><button data-s="RA">Rato</button><button data-s="">📍 Auto</button></div>
   <div id="metroLive" style="margin-top:10px;font-size:15px;line-height:1.6"></div>
+  <button class="btn" id="lineTog" style="margin-top:12px">🗺️ Ver a Linha Amarela ao vivo</button>
+  <div id="lineBox" style="display:none;margin-top:10px">
+    <svg id="lineMap" viewBox="0 0 320 560" style="width:100%;height:auto"></svg>
+    <div class="sub" style="font-size:11px;margin-top:4px" id="lineInfo">Posições estimadas a partir dos tempos de espera do Metro · atualiza a cada 15 s</div>
+  </div>
 </div>
 <div class="links" style="margin-bottom:12px">
   <button id="sim">▶ Simular viagem</button>
@@ -517,6 +522,48 @@ function renderMetro(){
   el.innerHTML=warn+html;
   sub.textContent=(mManual?"escolhida por ti":gps.pos&&hav(gps.pos,[st.lat,st.lon])<0.7?"📍 estás aqui":"estação por defeito")+" · atualizado às "+new Date(metro.t).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
+
+// ---- Mapa da Linha Amarela ao vivo
+const SEG=114, LY0=44, LDY=38, XS=165, XN=215; // segundos entre estações; geometria do desenho
+let lineOpen=false, lineTimer=null, trainEls={};
+function drawLineBase(){
+  const svg=document.getElementById("lineMap");const me=(mStation||AMARELA[5]).id;
+  let s=`<text x="${XS-6}" y="22" text-anchor="end" fill="#93a39a" font-size="11">↓ para o Rato</text><text x="${XN+6}" y="22" text-anchor="start" fill="#93a39a" font-size="11">↑ para Odivelas</text>`;
+  s+=`<rect x="${XS-4}" y="${LY0}" width="${XN-XS+8}" height="${LDY*12}" rx="4" fill="#f7c300" opacity=".25"/>`;
+  AMARELA.forEach((st,k)=>{const y=LY0+k*LDY,hl=st.id===me;
+    s+=`<rect x="${XS-10}" y="${y-5}" width="${XN-XS+20}" height="10" rx="5" fill="${hl?"#8cc63f":"#eef3ef"}" opacity="${hl?1:.9}"/>`;
+    s+=`<text x="${XS-18}" y="${y+4}" text-anchor="end" fill="${hl?"#8cc63f":"#eef3ef"}" font-size="12" font-weight="${hl?700:500}">${st.nome}${hl?" 📍":""}</text>`});
+  s+=`<g id="trains"></g>`;svg.innerHTML=s;trainEls={};
+}
+async function loadLine(){
+  try{
+    const r=await fetch(mUrl().replace(/\/$/,"")+"/?varias="+AMARELA.map(s=>s.id).join(","));const j=await r.json();if(!j.ok)throw new Error(j.erro||"sem dados");
+    const best={};
+    j.estacoes.forEach(e=>{const k=AMARELA.findIndex(s=>s.id===e.id);if(k<0)return;
+      e.cais.filter(c=>c.linha==="amarela").forEach(c=>{const dir=SUL.has(c.destino)?"S":NORTE.has(c.destino)?"N":null;if(!dir)return;
+        c.comboios.forEach(tr=>{const key=tr.id+dir;if(!best[key]||tr.s<best[key].s)best[key]={id:tr.id,dir,k,s:tr.s,dest:c.destino}})})});
+    const g=document.getElementById("trains");const seen=new Set();
+    Object.values(best).forEach(b=>{
+      let pos=b.dir==="S"?b.k-Math.min(b.s/SEG,1.6):b.k+Math.min(b.s/SEG,1.6);
+      pos=Math.max(-0.4,Math.min(12.4,pos));
+      const x=b.dir==="S"?XS:XN,y=LY0+pos*LDY,key=b.id+b.dir;seen.add(key);
+      let el=trainEls[key];
+      if(!el){el=document.createElementNS("http://www.w3.org/2000/svg","g");el.innerHTML=`<circle r="9" fill="#f7c300" stroke="#0f1512" stroke-width="2"/><text y="4" text-anchor="middle" font-size="10" font-weight="800" fill="#1a1500">${b.dir==="S"?"↓":"↑"}</text>`;
+        el.style.transition="transform 1.5s ease";el.style.transform=`translate(${x}px,${y}px)`;g.appendChild(el);trainEls[key]=el}
+      else el.style.transform=`translate(${x}px,${y}px)`;
+      el.querySelector("title")?.remove();
+      const ti=document.createElementNS("http://www.w3.org/2000/svg","title");ti.textContent=`Comboio ${b.id} → ${b.dest}`;el.appendChild(ti);
+    });
+    Object.keys(trainEls).forEach(k=>{if(!seen.has(k)){trainEls[k].remove();delete trainEls[k]}});
+    const n=Object.keys(best).length;
+    document.getElementById("lineInfo").textContent=`${n} comboios na linha · posições estimadas a partir dos tempos de espera · ${new Date().toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}`;
+  }catch(e){document.getElementById("lineInfo").textContent="Sem dados da linha ("+(e.message||e)+")"}
+}
+document.getElementById("lineTog").addEventListener("click",()=>{
+  lineOpen=!lineOpen;document.getElementById("lineBox").style.display=lineOpen?"":"none";
+  document.getElementById("lineTog").textContent=lineOpen?"Fechar mapa da linha":"🗺️ Ver a Linha Amarela ao vivo";
+  clearInterval(lineTimer);if(lineOpen){drawLineBase();loadLine();lineTimer=setInterval(()=>{if(!document.hidden)loadLine()},15e3)}
+});
 
 // ---- Eventos
 document.getElementById("dir").addEventListener("click",e=>{const b=e.target.closest("button");if(!b||sim)return;manualDir=b.dataset.d;pickedDep=null;store.set("rv_dir",manualDir);store.set("rv_dir_t",String(Date.now()));render()});
