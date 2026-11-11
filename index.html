@@ -189,9 +189,9 @@ async function metroBoard(id){
     if(L&&est){const iHere=L.est.findIndex(p=>p[0]===id),iD=L.est.findIndex(p=>norm(p[1])===norm(c.destino));
       if(iHere>=0&&iD>=0)term=iD<iHere?L.est[0][1]:L.est[L.est.length-1][1];}
     const k=c.linha+"|"+term;(out[k]=out[k]||{linha:c.linha,term,dest:new Set(),m:[]});
-    out[k].dest.add(c.destino);c.s.forEach(s=>out[k].m.push(Math.max(0,s-age)/60));
+    out[k].dest.add(c.destino);out[k].tr=out[k].tr||[];c.s.forEach(s=>{const m=Math.max(0,s-age)/60;out[k].m.push(m);out[k].tr.push({m,dest:c.destino})});
   });
-  const grupos=Object.values(out).map(g=>({...g,dest:[...g.dest],m:g.m.sort((a,b)=>a-b)})).sort((a,b)=>ORDEM_L.indexOf(a.linha)-ORDEM_L.indexOf(b.linha)||a.term.localeCompare(b.term));
+  const grupos=Object.values(out).map(g=>({...g,dest:[...g.dest],m:g.m.sort((a,b)=>a-b),tr:(g.tr||[]).sort((a,b)=>a.m-b.m)})).sort((a,b)=>ORDEM_L.indexOf(a.linha)-ORDEM_L.indexOf(b.linha)||a.term.localeCompare(b.term));
   return{grupos,aviso:j.aviso,ok:j.ok!==false,t:Date.now()};
 }
 function estadoHTML(linhas){
@@ -205,6 +205,57 @@ function metroGruposHTML(b,max=3,compact=false){
       <span class="m">→ <b>${esc(g.term)}</b>${via.length?`<small>alguns terminam em ${esc(via.join(", "))}</small>`:compact?"":`<small>Linha ${esc(L.nome)}</small>`}</span>
       <span class="in">${em(g.m[0])}<small>${g.m.slice(0,max).map(m=>fmtMin(nowM+m)).join(" · ")}</small></span></div>`}).join("");
 }
+
+
+// ---- Percurso entre duas estações (com mudanças de linha) e hora de chegada
+const MIN_MUDA=4; // minutos para mudar de linha (andar + esperar)
+function rota(de,para){
+  if(de===para)return null;
+  const dist={},prev={},Q=[];
+  (EST[de]?.linhas||[]).forEach(l=>{dist[de+"|"+l]=0;Q.push(de+"|"+l)});
+  while(Q.length){
+    Q.sort((a,b)=>dist[a]-dist[b]);const u=Q.shift();const[id,l]=u.split("|");
+    if(id===para)break;
+    const E=LINHAS[l].est,i=E.findIndex(p=>p[0]===id);
+    const viz=[];if(i>0)viz.push([E[i-1][0]+"|"+l,MIN_EST]);if(i<E.length-1)viz.push([E[i+1][0]+"|"+l,MIN_EST]);
+    (EST[id]?.linhas||[]).forEach(o=>{if(o!==l)viz.push([id+"|"+o,MIN_MUDA])});
+    viz.forEach(([v,c])=>{const d=dist[u]+c;if(dist[v]==null||d<dist[v]-1e-9){if(dist[v]==null)Q.push(v);dist[v]=d;prev[v]=u}});
+  }
+  const fim=Object.keys(dist).filter(k=>k.startsWith(para+"|")).sort((a,b)=>dist[a]-dist[b])[0];if(!fim)return null;
+  const cam=[];let c=fim;while(c){cam.unshift(c.split("|"));c=prev[c]}
+  const legs=[];cam.forEach(([id,l])=>{const last=legs[legs.length-1];if(last&&last.linha===l){last.to=id;last.n++}else legs.push({linha:l,from:id,to:id,n:0})});
+  return legs.filter(g=>g.n>0).map(g=>{const E=LINHAS[g.linha].est,a=E.findIndex(p=>p[0]===g.from),b=E.findIndex(p=>p[0]===g.to);return{...g,term:b>a?E[E.length-1][1]:E[0][1],ib:b,sul:b>a}});
+}
+const nomeE=id=>EST[id]?.nome||id;
+function chegadaHTML(origem,destino,b,compact){
+  const R=rota(origem,destino);if(!R||!R.length)return"";
+  const L0=R[0],E0=LINHAS[L0.linha].est;
+  const g=(b.grupos||[]).find(x=>x.linha===L0.linha&&x.term===L0.term);
+  // só comboios que chegam pelo menos até onde precisas (há alguns que terminam antes)
+  const serve=t=>{const iD=E0.findIndex(p=>norm(p[1])===norm(t.dest));return iD<0||(L0.sul?iD>=L0.ib:iD<=L0.ib)};
+  const ops=g?(g.tr||[]).filter(serve).slice(0,2):[];
+  const nowM=nowMin();
+  const total=t0=>{let t=t0;R.forEach((l,i)=>{if(i>0)t+=MIN_MUDA;t+=l.n*MIN_EST});return t};
+  const passos=R.map((l,i)=>`<span style="color:${LINHAS[l.linha].cor}">●</span> ${i?"muda em <b>"+esc(nomeE(l.from))+"</b> para a ":""}Linha ${LINHAS[l.linha].nome} → ${esc(l.term)} · ${l.n} ${l.n===1?"estação":"estações"}`).join("<br>");
+  if(!ops.length){
+    const est=total(0);
+    return `<div class="grp" style="background:rgba(140,198,63,.08);border:1px solid var(--line);border-radius:12px;padding:10px"><div class="sub">Até <b style="color:var(--txt)">${esc(nomeE(destino))}</b></div><div style="font-size:15px;margin-top:2px">Sem metro previsto agora · a viagem demora ~${Math.round(est)} min depois de entrares</div>${compact?"":`<div class="sub" style="margin-top:6px;line-height:1.6">${passos}</div>`}</div>`;
+  }
+  const t1=total(ops[0].m),t2=ops[1]?total(ops[1].m):null;
+  return `<div class="grp" style="background:rgba(140,198,63,.08);border:1px solid var(--g2);border-radius:12px;padding:10px">
+    <div class="sub">Até <b style="color:var(--txt)">${esc(nomeE(destino))}</b>${R.length>1?` · ${R.length-1} ${R.length===2?"mudança":"mudanças"}`:""}</div>
+    <div style="font-size:24px;font-weight:700;line-height:1.25">chegas às ${fmtMin(nowM+t1)} <span style="font-size:15px;color:var(--mut);font-weight:600">· ${Math.round(t1)} min</span></div>
+    <div class="sub">metro das ${fmtMin(nowM+ops[0].m)} (${em(ops[0].m)})${t2!=null?` · se perderes este: chegas às ${fmtMin(nowM+t2)}`:""}</div>
+    ${compact?"":`<div class="sub" style="margin-top:6px;line-height:1.6">${passos}</div>`}</div>`;
+}
+function destSelectHTML(origem,sel){
+  return `<select id="dest" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:12px;padding:10px;font:15px inherit;margin:6px 0 4px">
+    <option value="">Para onde vais? (escolhe a estação)</option>
+    ${ORDEM_L.map(l=>`<optgroup label="Linha ${LINHAS[l].nome}">${LINHAS[l].est.filter(p=>p[0]!==origem).map(([id,n])=>`<option value="${esc(id)}" ${id===sel?"selected":""}>${esc(n)}</option>`).join("")}</optgroup>`).join("")}
+  </select>`;
+}
+const destDe=id=>(ls.get("tp_dest",{})||{})[id]||"";
+function setDest(id,d){const o=ls.get("tp_dest",{})||{};if(d)o[id]=d;else delete o[id];ls.set("tp_dest",o)}
 
 // Mapa da linha ao vivo
 let lineTimer=null,lineData=null,trainEls={};
@@ -288,14 +339,49 @@ async function cpBoard(id,nome){
   const L=[...seen.values()].filter(r=>!r.passou&&r.real>=nm-1).sort((a,b)=>a.real-b.real);
   return{L,t:Date.now()};
 }
-function cpRowsHTML(b,max=12,filtro=""){
-  const nm=nowMin();let L=b.L;if(filtro)L=L.filter(r=>norm(r.dest).includes(norm(filtro)));
-  if(!L.length)return `<div class="empty">Sem partidas nas próximas 4 horas${filtro?" para esse destino":""}.</div>`;
+// Paragens de um comboio (com horas), para saber a que horas chega a cada estação
+const trainCache={};
+async function cpTrain(num){
+  const k=num,c=trainCache[k];if(c&&Date.now()-c.t<180e3)return c;
+  const dia=lisboa(new Date()).slice(0,10);
+  const j=await ext("ip",`/negocios-e-servicos/horarios-ncombio/${num}/${dia}`,15000);
+  const st=[];(function walk(o){if(Array.isArray(o)){o.forEach(walk);return}if(!o||typeof o!=="object")return;
+    if(("NomeEstacao" in o)&&("HoraProgramada" in o||"HoraPrevista" in o)){st.push(o);return}for(const x in o)walk(o[x])})(j);
+  const stops=st.map(o=>{const t=String(o.HoraProgramada||o.HoraPrevista||"").slice(-8,-3)||String(o.HoraProgramada||"").slice(0,5);
+    const prev=(String(o.Observacoes||"").match(/(\d\d:\d\d)/)||[])[1]||null;
+    return{nome:String(o.NomeEstacao||"").trim(),t:/^\d\d:\d\d$/.test(t)?t:String(o.HoraProgramada||"").slice(0,5),prev,passou:!!o.ComboioPassou}}).filter(x=>x.nome&&/^\d\d:\d\d$/.test(x.t));
+  const r={stops,t:Date.now()};trainCache[k]=r;return r;
+}
+// Junta as paragens aos próximos comboios (só os primeiros, para não pedir demasiado)
+async function cpEnrich(b,origem,n=10){
+  const L=b.L.filter(r=>r.num&&!r.sup).slice(0,n);
+  await Promise.all(L.map(async r=>{try{const T=await cpTrain(r.num);const i=T.stops.findIndex(x=>norm(x.nome)===norm(origem));r.stops=i>=0?T.stops.slice(i+1):T.stops}catch(e){r.stopsErr=1}}));
+  b.enriched=true;return b;
+}
+function destinosCP(b){
+  const set=new Map();b.L.forEach(r=>(r.stops||[]).forEach(s=>{const k=norm(s.nome);if(!set.has(k))set.set(k,s.nome)}));
+  b.L.forEach(r=>{const k=norm(r.dest);if(r.dest&&!set.has(k))set.set(k,r.dest)});
+  return[...set.values()].sort((x,y)=>x.localeCompare(y,"pt"));
+}
+function chegaA(r,dest){
+  if(!dest)return null;const k=norm(dest);
+  if(r.stops){const s=r.stops.find(x=>norm(x.nome)===k);if(!s)return false;let m=toMin(s.prev||s.t);if(m<r.m-60)m+=1440;return s.prev?m:m+r.atraso}
+  return norm(r.dest).includes(k)?undefined:false; // sem paragens: só sabemos se é o destino final
+}
+function cpRowsHTML(b,max=12,filtro="",aberto=""){
+  const nm=nowMin();let L=b.L,fora=0;
+  if(filtro){L=L.filter(r=>{const c=chegaA(r,filtro);if(c===false){fora++;return false}return true})}
+  if(!L.length)return `<div class="empty">Sem comboios nas próximas 4 horas${filtro?" que parem em "+esc(filtro):""}.</div>`;
   return L.slice(0,max).map(r=>{const d=r.real-nm;
     const st=r.sup?`<b class="bad">Suprimido</b>`:r.atraso?`<span class="late">+${r.atraso} min · parte ${fmtMin(r.real)}</span>`:"";
-    return `<div class="row" style="${r.sup?"opacity:.6":""}"><span class="t">${esc(r.t)}</span>
-      <span class="m">→ <b>${esc(r.dest)}</b><small>${esc(r.serv)}${r.num?" "+esc(r.num):""}${st?" · "+st:""}${!r.sup&&!r.atraso&&r.obs?" · "+esc(r.obs):""}</small></span>
-      <span class="in">${r.sup?"":d<1?"a sair":d<90?Math.round(d)+" min":""}</span></div>`}).join("");
+    const ch=filtro?chegaA(r,filtro):null;
+    const chH=typeof ch==="number"&&!r.sup?`<div style="margin-top:3px;font-size:14px;color:var(--g);font-weight:600">→ ${esc(filtro)} às ${fmtMin(ch)} <span class="sub">${ch>r.real?`· ${Math.round(ch-r.real)} min de viagem `:""}· chegas daqui a ${Math.max(0,Math.round(ch-nm))} min</span></div>`:"";
+    const open=aberto&&aberto===r.num;
+    const lista=open?(r.stops?`<div style="margin:6px 0 4px 64px;border-left:3px solid var(--line);padding-left:10px">${r.stops.map(s=>{const k=norm(s.nome)===norm(filtro);let m=toMin(s.prev||s.t);if(m<r.m-60)m+=1440;const real=s.prev?m:m+r.atraso;
+        return `<div class="tap" data-stop="${esc(s.nome)}" style="display:flex;gap:10px;padding:5px 0;font-size:14px;${k?"color:var(--g);font-weight:700":""}"><span style="font-variant-numeric:tabular-nums;min-width:44px">${fmtMin(real)}</span><span style="flex:1">${esc(s.nome)}</span>${r.atraso&&!s.prev?`<span class="sub">${esc(s.t)}</span>`:""}</div>`}).join("")}<div class="sub" style="font-size:11px">Toca numa estação para a escolheres como destino.</div></div>`:`<div class="sub" style="margin:4px 0 6px 64px">${r.stopsErr?"Não consegui obter as paragens deste comboio.":"A carregar paragens…"}</div>`):"";
+    return `<div class="row tap" data-train="${esc(r.num)}" style="${r.sup?"opacity:.6":""};flex-wrap:wrap"><span class="t">${esc(r.t)}</span>
+      <span class="m">→ <b>${esc(r.dest)}</b><small>${esc(r.serv)}${r.num?" "+esc(r.num):""}${st?" · "+st:""}${!r.sup&&!r.atraso&&r.obs?" · "+esc(r.obs):""}</small>${chH}</span>
+      <span class="in">${r.sup?"":d<1?"a sair":d<90?Math.round(d)+" min":""}<small>${open?"▴":"▾"}</small></span>${lista?`<div style="flex-basis:100%">${lista}</div>`:""}</div>`}).join("")+(fora?`<div class="sub" style="padding:6px 4px">${fora} ${fora===1?"comboio não para":"comboios não param"} em ${esc(filtro)}.</div>`:"");
 }
 
 // ======================================================================
@@ -349,10 +435,10 @@ function rdoList(linha,sent,fds){
 const cache={};
 async function board(f){
   const k=favKey(f),c=cache[k],ttl=f.tipo==="cp"?45e3:f.tipo==="rdo"?6e4:18e3;
-  if(c&&Date.now()-c.t<ttl)return c;
+  if(c&&Date.now()-c.t<ttl){if(f.tipo==="cp"&&c.L&&!c.enriched&&(f.filtro||state.board===f))await cpEnrich(c,f.nome,state.board===f?10:6);return c}
   let b;
   if(f.tipo==="metro"){if(metroClosed())b={closed:true,t:Date.now()};else b=await metroBoard(f.id)}
-  else if(f.tipo==="cp")b=await cpBoard(f.id,f.nome);
+  else if(f.tipo==="cp"){b=await cpBoard(f.id,f.nome);if(f.filtro||state.board===f)await cpEnrich(b,f.nome,state.board===f?10:6)}
   else if(f.tipo==="cm")b=await cmBoard(f.id);
   else if(f.tipo==="rdo")b={t:Date.now()};
   cache[k]=b;return b;
@@ -368,8 +454,8 @@ function bodyHTML(f,b,max){
   if(!b)return `<div class="empty">A carregar…</div>`;
   if(b.err)return `<div class="empty">⚠️ ${esc(b.err)}</div>`;
   if(b.closed)return `<div class="empty">Metro fechado · reabre às 06:30.</div>`;
-  if(f.tipo==="metro")return estadoHTML(EST[f.id]?.linhas)+metroGruposHTML(b,max>4?4:2,max<=4);
-  if(f.tipo==="cp")return cpRowsHTML(b,max,f.filtro||"");
+  if(f.tipo==="metro"){const d=destDe(f.id);return estadoHTML(EST[f.id]?.linhas)+(d&&EST[d]?chegadaHTML(f.id,d,b,max<=4):"")+metroGruposHTML(b,max>4?4:2,max<=4)}
+  if(f.tipo==="cp")return cpRowsHTML(b,max,f.filtro||"",f.aberto||"");
   if(f.tipo==="cm")return cmRowsHTML(b,max);
   return"";
 }
@@ -447,7 +533,7 @@ function vComboios(){
   let h=`<h2>Comboios</h2><div class="hint">CP (urbanos, Regional, Intercidades, Alfa Pendular) e Fertagus · partidas em direto, com atrasos</div>
   <input class="q" id="q" placeholder="Procurar estação (ex.: Bombarral, Oriente, Sete Rios)" value="${esc(state.q)}" autocomplete="off"><div id="res"></div>`;
   const rec=ls.get("tp_rec",[]).filter(f=>f.tipo==="cp"),fv=favs.filter(f=>f.tipo==="cp");
-  if(fv.length)h+=`<div class="lbl" style="margin:8px 2px">⭐ Favoritas</div>`+fv.map(f=>cardShell(f,f.filtro?"só para "+f.filtro:"")).join("");
+  if(fv.length)h+=`<div class="lbl" style="margin:8px 2px">⭐ Favoritas</div>`+fv.map(f=>cardShell(f,f.filtro?"até "+f.filtro:"")).join("");
   const rr=rec.filter(r=>!isFav(r));
   if(rr.length)h+=`<div class="card"><div class="lbl">Recentes</div>${rr.map(f=>`<div class="row tap" data-open='${esc(JSON.stringify(f))}'><span>🚆</span><span class="m"><b>${esc(f.nome)}</b></span><span class="sub">›</span></div>`).join("")}</div>`;
   $("#view").innerHTML=h;
@@ -501,16 +587,25 @@ function renderBoard(){
   const fav=isFav(f);
   let sub=f.tipo==="metro"?(EST[f.id]?.linhas||[]).map(l=>`<span style="color:${LINHAS[l].cor}">●</span> ${LINHAS[l].nome}`).join(" "):f.tipo==="cp"?"Partidas · CP e Fertagus":f.tipo==="cm"?"Carris Metropolitana · paragem "+esc(f.id):f.tipo==="rdo"?"Rodoviária do Oeste · horário":"";
   let h=`<button class="back" id="back">‹ Voltar</button><div class="card"><div class="head"><span style="font-size:22px">${ICON[f.tipo]}</span><span class="ttl">${esc(f.nome)}<div class="sub" style="font-weight:500">${sub}</div></span><button class="star ${fav?"on":""}" id="star" aria-label="Favorito">${fav?"★":"☆"}</button></div>`;
-  if(f.tipo==="cp")h+=`<input class="q" id="filt" placeholder="Só comboios para… (ex.: Lisboa, Caldas)" value="${esc(f.filtro||"")}" style="margin:6px 0 4px;padding:9px 12px;font-size:15px">`;
+  if(f.tipo==="metro")h+=destSelectHTML(f.id,destDe(f.id));
+  if(f.tipo==="cp")h+=`<select id="filt" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:12px;padding:10px;font:15px inherit;margin:6px 0 4px"><option value="">Para onde vais? (a carregar estações…)</option>${f.filtro?`<option selected>${esc(f.filtro)}</option>`:""}</select>`;
   h+=`<div id="bb"><div class="empty">A carregar…</div></div><div class="sub" id="upd" style="font-size:11px;margin-top:8px"></div></div>`;
   if(f.tipo==="metro")h+=`<div class="card">${(EST[f.id]?.linhas||[]).map(l=>`<button class="btn" data-line="${l}" style="margin-top:6px">🗺️ Linha ${LINHAS[l].nome} ao vivo</button>`).join("")}</div>`;
   if(f.tipo==="rdo"&&f.id.startsWith("rv:"))h+=`<a class="card" href="rapida-verde.html" style="display:block;text-decoration:none;color:var(--g)">Abrir a Rápida Verde em modo viagem (GPS e chegada estimada) →</a>`;
   $("#view").innerHTML=h;window.scrollTo(0,0);
   $("#back").onclick=()=>{state.board=null;render()};
   $("#star").onclick=()=>{toggleFav(f);const on=isFav(f);$("#star").classList.toggle("on",on);$("#star").textContent=on?"★":"☆"};
-  const filt=$("#filt");if(filt)filt.oninput=()=>{f.filtro=filt.value.trim();const i=favs.findIndex(x=>favKey(x)===favKey(f));if(i>=0){favs[i].filtro=f.filtro;ls.set("tp_favs",favs)}paint(cache[favKey(f)])};
+  const setFiltro=v=>{f.filtro=v;const i=favs.findIndex(x=>favKey(x)===favKey(f));if(i>=0){favs[i].filtro=f.filtro;ls.set("tp_favs",favs)}const o=ls.get("tp_cpdest",{})||{};if(v)o[f.id]=v;else delete o[f.id];ls.set("tp_cpdest",o);fillSel(cache[favKey(f)]);paint(cache[favKey(f)])};
+  if(f.tipo==="cp"&&f.filtro==null)f.filtro=(ls.get("tp_cpdest",{})||{})[f.id]||"";
+  const filt=$("#filt");if(filt)filt.onchange=()=>setFiltro(filt.value);
+  const fillSel=b=>{const el=$("#filt");if(!el||!b||!b.L)return;const D=destinosCP(b);if(f.filtro&&!D.some(x=>norm(x)===norm(f.filtro)))D.unshift(f.filtro);
+    el.innerHTML=`<option value="">Para onde vais? (todas as partidas)</option>`+D.map(x=>`<option ${norm(x)===norm(f.filtro||"")?"selected":""}>${esc(x)}</option>`).join("")};
+  if(f.tipo==="cp")$("#bb").onclick=e=>{const st=e.target.closest("[data-stop]");if(st){e.stopPropagation();setFiltro(st.dataset.stop);return}
+    const t=e.target.closest("[data-train]");if(!t)return;f.aberto=f.aberto===t.dataset.train?"":t.dataset.train;const b=cache[favKey(f)];paint(b);
+    const r=b&&b.L.find(x=>x.num===f.aberto);if(r&&!r.stops&&!r.stopsErr)cpTrain(r.num).then(T=>{const i=T.stops.findIndex(x=>norm(x.nome)===norm(f.nome));r.stops=i>=0?T.stops.slice(i+1):T.stops;paint(b)}).catch(()=>{r.stopsErr=1;paint(b)})};
   document.querySelectorAll("[data-line]").forEach(b=>b.onclick=()=>{state.board=null;state.tab="metro";state.mLinha=b.dataset.line;state.lineOpen=true;ls.set("tp_tab","metro");render()});
-  const paint=b=>{$("#bb").innerHTML=bodyHTML(f,b,f.tipo==="cp"?20:f.tipo==="cm"?15:f.tipo==="rdo"?40:6);$("#upd").textContent=b&&b.t?"Atualizado às "+new Date(b.t).toLocaleTimeString("pt-PT"):""};
+  const ds=$("#dest");if(ds)ds.onchange=()=>{setDest(f.id,ds.value);paint(cache[favKey(f)])};
+  const paint=b=>{if(f.tipo==="cp")fillSel(b);$("#bb").innerHTML=bodyHTML(f,b,f.tipo==="cp"?20:f.tipo==="cm"?15:f.tipo==="rdo"?40:6);$("#upd").textContent=b&&b.t?"Atualizado às "+new Date(b.t).toLocaleTimeString("pt-PT"):""};
   const load=async(force)=>{if(force)delete cache[favKey(f)];let b;try{b=await board(f)}catch(e){b={err:e.message+(f.tipo!=="metro"?" — confirma que o Worker está atualizado":"")}}if(state.board===f)paint(b)};
   load();timer=setInterval(()=>{if(!document.hidden)load(true)},f.tipo==="cp"?45e3:20e3);
 }
