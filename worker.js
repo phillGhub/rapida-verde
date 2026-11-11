@@ -68,6 +68,9 @@ export default {
     }
     if (u.searchParams.get("varias")) {
       // Tempos de várias estações de uma vez (para o mapa da linha)
+      if (globalThis.__varias && Date.now() - globalThis.__varias.t < 8000 && globalThis.__varias.q === u.searchParams.get("varias")) {
+        return new Response(globalThis.__varias.body, { headers });
+      }
       const ids = u.searchParams.get("varias").toUpperCase().split(",").map(s => s.replace(/[^A-Z]/g, "").slice(0, 3)).filter(Boolean).slice(0, 20);
       try {
         const t1 = await token(env);
@@ -84,7 +87,9 @@ export default {
             })) };
           } catch (e) { return { id, cais: [], erro: String(e.message || e) }; }
         }));
-        return new Response(JSON.stringify({ ok: true, atualizado: new Date().toISOString(), estacoes: res, estado: await estadoLinhas(env) }), { headers });
+        const body = JSON.stringify({ ok: true, atualizado: new Date().toISOString(), estacoes: res, estado: await estadoLinhas(env) });
+        globalThis.__varias = { t: Date.now(), q: u.searchParams.get("varias"), body };
+        return new Response(body, { headers });
       } catch (e) {
         return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
       }
