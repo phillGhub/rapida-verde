@@ -1,6 +1,19 @@
-// Rápida Verde · intermediário para os tempos do Metro de Lisboa
+// Transportes · intermediário para Metro de Lisboa, comboios (IP: CP + Fertagus) e Carris Metropolitana
 // Guarda a chave em Settings → Variables and Secrets → ML_BASIC (tipo Secret)
 // ML_BASIC = Base64 de "ConsumerKey:ConsumerSecret"
+//
+// Novo: ?p=cm&u=/v2/...                     → Carris Metropolitana (passa a resposta tal como vem)
+//       ?p=ip&u=/negocios-e-servicos/...    → Infraestruturas de Portugal (partidas/chegadas de todos os comboios)
+// Só reencaminha para estes dois sites e só para estes caminhos.
+const PROXY = {
+  cm: { base: "https://api.carrismetropolitana.pt", path: /^\/v2\/[A-Za-z0-9_\-\/]+$/ },
+  ip: { base: "https://www.infraestruturasdeportugal.pt", path: /^\/negocios-e-servicos\/[^?#]+$/ }
+};
+function ttlFor(p, u) {
+  if (p === "cm" && /^\/v2\/(stops|lines|routes)$/.test(u)) return 21600; // listas: 6 h
+  if (p === "ip" && /estacao-nome/.test(u)) return 86400;
+  return 15; // tempos em direto
+}
 
 const DEST = {"33":"Reboleira","34":"Amadora Este","35":"Pontinha","36":"Colégio Militar/Luz","37":"Laranjeiras","38":"São Sebastião","39":"Avenida","40":"Baixa-Chiado","41":"Terreiro do Paço","42":"Santa Apolónia","43":"Odivelas","44":"Lumiar","45":"Campo Grande","46":"Campo Pequeno","48":"Rato","50":"Telheiras","51":"Alvalade","52":"Alameda","53":"Martim Moniz","54":"Cais do Sodré","56":"Bela Vista","57":"Chelas","59":"Moscavide","60":"Aeroporto"};
 const LINHA = { A: "azul", B: "amarela", C: "verde", D: "vermelha" };
@@ -54,6 +67,24 @@ export default {
     if (req.method === "OPTIONS") return new Response(null, { headers });
 
     const u = new URL(req.url);
+    const p = u.searchParams.get("p");
+    if (p && PROXY[p]) {
+      const path = u.searchParams.get("u") || "";
+      if (!PROXY[p].path.test(path) || path.includes("..")) {
+        return new Response(JSON.stringify({ ok: false, erro: "caminho não permitido" }), { status: 400, headers });
+      }
+      const ttl = ttlFor(p, path);
+      try {
+        const r = await fetch(PROXY[p].base + path.split("/").map(encodeURIComponent).join("/").replace(/%2C/g, ",").replace(/%3A/g, ":"), {
+          headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.0 Mobile/15E148 Safari/604.1", "Referer": PROXY[p].base + "/" },
+          cf: { cacheTtl: ttl, cacheEverything: true }
+        });
+        // Passa o corpo sem o ler (gasta quase nada de CPU no Worker)
+        return new Response(r.body, { status: r.status, headers: { ...headers, "Cache-Control": "max-age=" + Math.min(ttl, 3600) } });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
+      }
+    }
     if (u.searchParams.get("lista") === "estacoes") {
       try {
         let r = await fetch(`${API}/estadoServicoML/1.0.1/infoEstacao/todos`, { headers: { Authorization: "Bearer " + await token(env) } });

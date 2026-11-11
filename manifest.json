@@ -1,6 +1,6 @@
 {
-  "name": "Rápida Verde · Bombarral ⇄ Campo Grande",
-  "short_name": "Rápida Verde",
+  "name": "Transportes · Metro, comboios e autocarros",
+  "short_name": "Transportes",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
