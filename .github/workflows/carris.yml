@@ -1,0 +1,24 @@
+name: Dados Carris
+on:
+  schedule:
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+permissions:
+  contents: write
+jobs:
+  gerar:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - name: Gerar ficheiros
+        run: python3 carris_gtfs.py "https://gateway.carris.pt/gateway/gtfs/api/v2.11/GTFS" site
+      - name: Publicar no ramo dados
+        run: |
+          cd site
+          git init -q -b dados
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -qm "Dados Carris $(date -u +%F)"
+          git push -f "https://x-access-token:${{ secrets.GITHUB_TOKEN }}@github.com/${{ github.repository }}.git" dados
