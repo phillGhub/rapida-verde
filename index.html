@@ -88,13 +88,9 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
 
 <div class="metro" id="metroCard" style="flex-direction:column;align-items:stretch">
   <div style="display:flex;align-items:center;gap:12px">
-    <span class="mdot">M</span><span class="mtxt"><b>Metro · Linha Amarela em Campo Grande</b><span id="metroSub">Próximos comboios em tempo real</span></span>
-    <button id="metroTog" class="btn" style="width:auto;margin:0;padding:8px 12px">Ver aqui</button>
+    <span class="mdot">M</span><span class="mtxt"><b>Metro · Campo Grande</b><span id="metroSub">Tempos em direto</span></span>
   </div>
-  <div id="metroBox" style="display:none;margin-top:10px">
-    <iframe id="metroFrame" title="Próximos comboios Campo Grande" style="width:100%;height:520px;border:0;border-radius:12px;background:#fff" loading="lazy" referrerpolicy="no-referrer"></iframe>
-    <div class="sub" style="font-size:12px;margin-top:6px">Se ficar em branco, o site do Metro não deixa mostrar aqui: <a href="https://www.metrolisboa.pt/viajar/proximoscomboios/?estacao=CG" target="_blank" rel="noopener" style="color:var(--g)">abrir no site do Metro</a>.</div>
-  </div>
+  <div id="metroLive" style="margin-top:10px;font-size:15px;line-height:1.7"></div>
 </div>
 <div class="links" style="margin-bottom:12px">
   <button id="sim">▶ Simular viagem</button>
@@ -118,6 +114,9 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
   <div class="sub" style="font-size:13px;margin:6px 0 8px">Cola aqui uma chave gratuita do TomTom (developer.tomtom.com). Sem chave, a app usa o trânsito típico, a meteorologia e o teu histórico.</div>
   <div style="display:flex;gap:8px"><input id="ttIn" placeholder="Chave TomTom" style="flex:1;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px;font:14px inherit"><button id="ttSave" class="btn" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div>
   <div class="sub" id="ttInfo" style="font-size:12px;margin-top:6px"></div>
+  <div class="lbl" style="margin-top:14px">Metro em direto</div>
+  <div class="sub" style="font-size:13px;margin:6px 0 8px">Endereço do teu Worker da Cloudflare (termina em .workers.dev).</div>
+  <div style="display:flex;gap:8px"><input id="mIn" placeholder="https://….workers.dev" style="flex:1;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:10px;padding:10px;font:14px inherit"><button id="mSave" class="btn" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div>
   <div class="lbl" style="margin-top:14px">Últimas viagens</div>
   <div class="sub" id="histInfo" style="font-size:13px;margin-top:6px"></div>
   <button class="btn" id="endTrip" style="display:none">Não estou no autocarro — cancelar viagem</button>
@@ -278,14 +277,12 @@ function avgSpeed(){if(sim)return sim.avg;if(gps.hist.length<2)return null;const
 function render(){
   updateStops();
   decideDir();
-  try{metroAutoCheck()}catch(e){}
   renderStatus();
   document.querySelectorAll("#dir button").forEach(b=>b.classList.toggle("on",b.dataset.d===dir));
   const S=serviceNow(),list=trips(dir,S.fds);
   const dest=dir==="ida"?"Campo Grande":"Bombarral",destP=dir==="ida"?ROUTE[ROUTE.length-1]:ROUTE[0];
   document.getElementById("dirHint").textContent="Sentido "+dirSource+" · horário de "+S.label;
   document.getElementById("destName").textContent=dest;
-  document.getElementById("metroSub").textContent=dir==="ida"?"Quando chegares: próximos comboios em tempo real":"Antes de vires para o autocarro: tempos e estado da linha";
 
   // Posição
   const pos=sim?pointAt(sim.km):gps.pos;
@@ -437,17 +434,34 @@ document.querySelectorAll("[data-stop]").forEach(b=>b.addEventListener("click",(
   b.textContent=`✓ Paragem ${STOP_NAME[s]} gravada (±${Math.round(gps.acc||0)} m)`;
   lastAt={s,t:Date.now()};save("rv_lastAt",lastAt);render();
 }));
+document.getElementById("mSave").addEventListener("click",()=>{let v=document.getElementById("mIn").value.trim();if(v&&!/^https?:\/\//.test(v))v="https://"+v;try{v?localStorage.setItem("rv_metro",v):localStorage.removeItem("rv_metro")}catch(e){}document.getElementById("mIn").value="";metro=null;loadMetro()});
 document.getElementById("ttSave").addEventListener("click",()=>{const v=document.getElementById("ttIn").value.trim();try{v?localStorage.setItem("rv_tt",v):localStorage.removeItem("rv_tt")}catch(e){}document.getElementById("ttIn").value="";live=null;render();loadLive()});
 document.getElementById("endTrip").addEventListener("click",()=>{active=null;save("rv_trip",null);lastAt=null;save("rv_lastAt",null);render()});
 
-const METRO_URL="https://www.metrolisboa.pt/viajar/proximoscomboios/?estacao=CG";
-let metroOpen=false,metroAuto=false;
-function setMetro(open){metroOpen=open;const f=document.getElementById("metroFrame");document.getElementById("metroBox").style.display=open?"":"none";document.getElementById("metroTog").textContent=open?"Fechar":"Ver aqui";if(open&&!f.src)f.src=METRO_URL;if(open)f.src=METRO_URL}
-document.getElementById("metroTog").addEventListener("click",()=>{metroAuto=true;setMetro(!metroOpen)});
-setInterval(()=>{if(metroOpen)document.getElementById("metroFrame").src=METRO_URL},60e3);
-function metroAutoCheck(){ // abre sozinho a menos de 8 km do Campo Grande, na ida
-  if(metroAuto||sim||!gps.pos)return;
-  if(dir==="ida"&&hav(gps.pos,stopPos("c"))<8){metroAuto=true;setMetro(true)}
+// ---- Metro em direto (via Cloudflare)
+const mUrl=()=>{try{return localStorage.getItem("rv_metro")||"https://rapidametro.filipe-sevinate.workers.dev"}catch(e){return"https://rapidametro.filipe-sevinate.workers.dev"}};
+let metro=null;
+const mm=s=>s<45?"a chegar":Math.round(s/60)+" min";
+async function loadMetro(){
+  const u=mUrl();if(!u){renderMetro();return}
+  const h=new Date().getHours()+new Date().getMinutes()/60;
+  if(h>=1.1&&h<6.4){metro={closed:true};renderMetro();return}
+  try{const r=await fetch(u.replace(/\/$/,"")+"/?estacao=CG");const j=await r.json();if(!j.ok)throw new Error(j.erro||"sem dados");metro={...j,t:Date.now()}}
+  catch(e){metro={err:String(e.message||e),t:Date.now()}}
+  renderMetro();
+}
+function renderMetro(){
+  const el=document.getElementById("metroLive"),sub=document.getElementById("metroSub");
+  if(!mUrl()){sub.textContent="Configura o endereço no fundo da app";el.innerHTML="";return}
+  if(!metro){sub.textContent="A carregar…";el.innerHTML="";return}
+  if(metro.closed){sub.textContent="Metro fechado · abre às 06:30";el.innerHTML="";return}
+  if(metro.err){sub.textContent="Sem ligação ao Metro ("+metro.err+")";el.innerHTML="";return}
+  const age=Math.round((Date.now()-new Date(metro.atualizado).getTime())/1000);
+  const adj=s=>Math.max(0,s-age);
+  const row=(c,big)=>`<div style="${big?"":"font-size:13px;color:var(--mut)"}">${big?"🟡":"🟢"} <b style="color:var(--txt)">${c.destino}</b>: ${c.s.map(s=>mm(adj(s))).join(" · ")}</div>`;
+  const am=metro.comboios.filter(c=>c.linha==="amarela"),ve=metro.comboios.filter(c=>c.linha==="verde");
+  el.innerHTML=am.map(c=>row(c,true)).join("")+ve.map(c=>row(c,false)).join("");
+  sub.textContent="Atualizado às "+new Date(metro.t).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
 
 // ---- Eventos
@@ -504,7 +518,8 @@ document.getElementById("mode").addEventListener("click",()=>{
   startGPS();
 });
 startGPS();
-loadWx();setInterval(loadWx,15*60e3);setTimeout(loadLive,3000);setInterval(loadLive,2*60e3);
+loadWx();setInterval(loadWx,15*60e3);loadMetro();setInterval(()=>{if(!document.hidden)loadMetro()},30e3);document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadMetro()});
+setTimeout(loadLive,3000);setInterval(loadLive,2*60e3);
 render();setInterval(()=>{if(!sim)render()},15000);
 </script>
 </body>
