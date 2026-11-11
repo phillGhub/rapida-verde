@@ -35,6 +35,19 @@ export default {
     };
     if (req.method === "OPTIONS") return new Response(null, { headers });
 
+    const u = new URL(req.url);
+    if (u.searchParams.get("lista") === "estacoes") {
+      try {
+        let r = await fetch(`${API}/estadoServicoML/1.0.1/infoEstacao/todos`, { headers: { Authorization: "Bearer " + await token(env) } });
+        if (r.status === 401) r = await fetch(`${API}/estadoServicoML/1.0.1/infoEstacao/todos`, { headers: { Authorization: "Bearer " + await token(env, true) } });
+        const j = await r.json();
+        const L = Array.isArray(j.resposta) ? j.resposta : [];
+        const est = L.map(x => ({ id: x.stop_id, nome: x.stop_name, lat: Number(x.stop_lat), lon: Number(x.stop_lon), linhas: String(x.linha || "") }));
+        return new Response(JSON.stringify({ ok: true, estacoes: est }), { headers: { ...headers, "Cache-Control": "max-age=86400" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
+      }
+    }
     const est = (new URL(req.url).searchParams.get("estacao") || "CG").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
     try {
       const pedir = t => fetch(`${API}/estadoServicoML/1.0.1/tempoEspera/Estacao/${est}`, { headers: { Authorization: "Bearer " + t } });

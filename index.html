@@ -88,9 +88,10 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
 
 <div class="metro" id="metroCard" style="flex-direction:column;align-items:stretch">
   <div style="display:flex;align-items:center;gap:12px">
-    <span class="mdot">M</span><span class="mtxt"><b>Metro · Campo Grande</b><span id="metroSub">Tempos em direto</span></span>
+    <span class="mdot">M</span><span class="mtxt"><b id="metroTtl">Metro · Campo Grande</b><span id="metroSub">Tempos em direto</span></span>
   </div>
-  <div id="metroLive" style="margin-top:10px;font-size:15px;line-height:1.7"></div>
+  <div class="seg" id="mChips" style="margin-top:10px;padding:3px"><button data-s="CG">Campo Grande</button><button data-s="EC">Entre Campos</button><button data-s="RA">Rato</button><button data-s="">📍 Auto</button></div>
+  <div id="metroLive" style="margin-top:10px;font-size:15px;line-height:1.6"></div>
 </div>
 <div class="links" style="margin-bottom:12px">
   <button id="sim">▶ Simular viagem</button>
@@ -440,29 +441,67 @@ document.getElementById("endTrip").addEventListener("click",()=>{active=null;sav
 
 // ---- Metro em direto (via Cloudflare)
 const mUrl=()=>{try{return localStorage.getItem("rv_metro")||"https://rapidametro.filipe-sevinate.workers.dev"}catch(e){return"https://rapidametro.filipe-sevinate.workers.dev"}};
-let metro=null;
+// Linha Amarela, de norte para sul (códigos e posições aproximados; substituídos pelos da API quando disponíveis)
+let AMARELA=[["OD","Odivelas",38.7934,-9.1731],["SR","Senhor Roubado",38.7856,-9.1716],["AX","Ameixoeira",38.7800,-9.1600],["LU","Lumiar",38.7730,-9.1597],["QC","Quinta das Conchas",38.7672,-9.1556],["CG","Campo Grande",38.7603,-9.1578],["CU","Cidade Universitária",38.7518,-9.1588],["EC","Entre Campos",38.7480,-9.1486],["CP","Campo Pequeno",38.7417,-9.1468],["SA","Saldanha",38.7350,-9.1453],["PI","Picoas",38.7307,-9.1465],["MP","Marquês de Pombal",38.7246,-9.1500],["RA","Rato",38.7202,-9.1543]].map(([id,nome,lat,lon])=>({id,nome,lat,lon}));
+const NORTE=new Set(["Odivelas","Lumiar","Campo Grande"]), SUL=new Set(["Rato","Campo Pequeno"]);
+const MIN_ESTACAO=1.9; // minutos por estação na Linha Amarela
+let metro=null, mStation=null, mManual=null;
 const mm=s=>s<45?"a chegar":Math.round(s/60)+" min";
+const idxA=id=>AMARELA.findIndex(s=>s.id===id);
+async function loadStations(){
+  try{const c=JSON.parse(localStorage.getItem("rv_estacoes")||"null");if(c&&Date.now()-c.t<7*864e5){mergeStations(c.l);return}}catch(e){}
+  try{const r=await fetch(mUrl().replace(/\/$/,"")+"/?lista=estacoes");const j=await r.json();if(j.ok&&j.estacoes.length){mergeStations(j.estacoes);try{localStorage.setItem("rv_estacoes",JSON.stringify({t:Date.now(),l:j.estacoes}))}catch(e){}}}catch(e){}
+}
+function mergeStations(L){
+  const norm=s=>String(s||"").normalize("NFD").replace(/[̀-ͯ]/g,"").toLowerCase().replace(/[^a-z]/g,"");
+  AMARELA.forEach(a=>{const m=L.find(x=>norm(x.nome)===norm(a.nome)||norm(x.nome).startsWith(norm(a.nome)));if(m){a.id=m.id;if(m.lat&&m.lon){a.lat=m.lat;a.lon=m.lon}}});
+}
+function pickStation(){
+  if(mManual)return AMARELA.find(s=>s.id===mManual)||AMARELA[5];
+  if(gps.pos){let b=null,bd=1e9;AMARELA.forEach(s=>{const d=hav(gps.pos,[s.lat,s.lon]);if(d<bd){bd=d;b=s}});if(bd<0.7)return b}
+  return AMARELA[5]; // Campo Grande por defeito
+}
 async function loadMetro(){
-  const u=mUrl();if(!u){renderMetro();return}
+  mStation=pickStation();
   const h=new Date().getHours()+new Date().getMinutes()/60;
   if(h>=1.1&&h<6.4){metro={closed:true};renderMetro();return}
-  try{const r=await fetch(u.replace(/\/$/,"")+"/?estacao=CG");const j=await r.json();if(!j.ok)throw new Error(j.erro||"sem dados");metro={...j,t:Date.now()}}
+  try{const r=await fetch(mUrl().replace(/\/$/,"")+"/?estacao="+mStation.id);const j=await r.json();if(!j.ok)throw new Error(j.erro||"sem dados");metro={...j,t:Date.now()}}
   catch(e){metro={err:String(e.message||e),t:Date.now()}}
   renderMetro();
 }
+function nextBusFromCG(arrMin){ // primeiro autocarro que para no Bombarral depois de chegar ao Campo Grande
+  const S=serviceNow();return trips("volta",S.fds).find(t=>t.dep>=arrMin);
+}
 function renderMetro(){
-  const el=document.getElementById("metroLive"),sub=document.getElementById("metroSub");
-  if(!mUrl()){sub.textContent="Configura o endereço no fundo da app";el.innerHTML="";return}
+  const el=document.getElementById("metroLive"),sub=document.getElementById("metroSub"),ttl=document.getElementById("metroTtl");
+  const st=mStation||AMARELA[5];ttl.textContent="Metro · "+st.nome;
+  const MAPN={CG:"Campo Grande",EC:"Entre Campos",RA:"Rato"};document.querySelectorAll("#mChips button").forEach(b=>b.classList.toggle("on",b.dataset.s?(mManual&&MAPN[b.dataset.s]===st.nome):!mManual));
   if(!metro){sub.textContent="A carregar…";el.innerHTML="";return}
   if(metro.closed){sub.textContent="Metro fechado · abre às 06:30";el.innerHTML="";return}
   if(metro.err){sub.textContent="Sem ligação ao Metro ("+metro.err+")";el.innerHTML="";return}
-  const age=Math.round((Date.now()-new Date(metro.atualizado).getTime())/1000);
-  const adj=s=>Math.max(0,s-age);
-  const row=(c,big)=>`<div style="${big?"":"font-size:13px;color:var(--mut)"}">${big?"🟡":"🟢"} <b style="color:var(--txt)">${c.destino}</b>: ${c.s.map(s=>mm(adj(s))).join(" · ")}</div>`;
-  const am=metro.comboios.filter(c=>c.linha==="amarela"),ve=metro.comboios.filter(c=>c.linha==="verde");
-  el.innerHTML=am.map(c=>row(c,true)).join("")+ve.map(c=>row(c,false)).join("");
-  if(!metro.comboios.length)el.innerHTML=`<div class="sub">Sem comboios de momento${metro.aviso?" ("+metro.aviso+")":""}.</div>`;
-  sub.textContent="Atualizado às "+new Date(metro.t).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
+  const age=Math.max(0,Math.round((Date.now()-new Date(metro.atualizado).getTime())/1000)), adj=s=>Math.max(0,s-age);
+  const am=metro.comboios.filter(c=>c.linha==="amarela");
+  const i=idxA(st.id), iCG=5, iEC=7, iRA=12;
+  // Sentido: no Campo Grande (ou a norte) vais para sul; a sul do Campo Grande vais para norte (de volta ao autocarro)
+  const goSouth=i<=iCG;
+  const mine=am.filter(c=>goSouth?SUL.has(c.destino):NORTE.has(c.destino)).sort((a,b)=>a.s[0]-b.s[0]);
+  const other=am.filter(c=>!mine.includes(c));
+  const S=serviceNow();let html="";
+  if(mine.length){
+    const first=adj(mine[0].s[0])/60;
+    html+=`<div><b style="color:var(--txt)">${goSouth?"↓ sentido Rato":"↑ sentido Odivelas"}</b>: ${mine.map(c=>c.s.map(s=>mm(adj(s))).join(" · ")+(mine.length>1?` <span style="color:var(--mut)">(${c.destino})</span>`:"")).join(" | ")}</div>`;
+    if(goSouth){
+      const tEC=S.mins+first+(iEC-i)*MIN_ESTACAO,tRA=S.mins+first+(iRA-i)*MIN_ESTACAO;
+      html+=`<div class="sub" style="font-size:13px">Chegas a Entre Campos ~${fmt(tEC)} · Rato ~${fmt(tRA)}</div>`;
+    }else{
+      const arrCG=S.mins+first+(i-iCG)*MIN_ESTACAO, atStopCG=arrCG+4;
+      const b=nextBusFromCG(atStopCG);
+      html+=`<div class="sub" style="font-size:13px">Chegas ao Campo Grande ~${fmt(arrCG)}`+(b?` → apanhas o autocarro das <b style="color:var(--g)">${fmt(b.dep)}</b> (chega ao Bombarral ${fmt(b.arr)})`:" → sem mais autocarros hoje")+`</div>`;
+    }
+  }else html+=`<div class="sub">Sem comboios ${goSouth?"para o Rato":"para o Campo Grande"} de momento${metro.aviso?" ("+metro.aviso+")":""}.</div>`;
+  if(other.length)html+=`<div style="font-size:13px;color:var(--mut);margin-top:4px">${goSouth?"↑":"↓"} ${other.map(c=>c.destino+": "+c.s.slice(0,2).map(s=>mm(adj(s))).join(" · ")).join(" | ")}</div>`;
+  el.innerHTML=html;
+  sub.textContent=(mManual?"escolhida por ti":gps.pos&&hav(gps.pos,[st.lat,st.lon])<0.7?"📍 estás aqui":"estação por defeito")+" · atualizado às "+new Date(metro.t).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
 
 // ---- Eventos
@@ -519,7 +558,7 @@ document.getElementById("mode").addEventListener("click",()=>{
   startGPS();
 });
 startGPS();
-loadWx();setInterval(loadWx,15*60e3);loadMetro();setInterval(()=>{if(!document.hidden)loadMetro()},30e3);document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadMetro()});
+loadWx();setInterval(loadWx,15*60e3);loadStations().then(loadMetro);document.getElementById("mChips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const map={CG:"Campo Grande",EC:"Entre Campos",RA:"Rato"};mManual=b.dataset.s?(AMARELA.find(s=>s.nome===map[b.dataset.s])||{}).id||b.dataset.s:null;metro=null;renderMetro();loadMetro()});setInterval(()=>{if(!document.hidden)loadMetro()},30e3);document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadMetro()});
 setTimeout(loadLive,3000);setInterval(loadLive,2*60e3);
 render();setInterval(()=>{if(!sim)render()},15000);
 </script>
