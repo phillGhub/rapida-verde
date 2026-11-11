@@ -39,6 +39,9 @@ for r in rows("routes.txt"):
     txt = (r.get("route_text_color") or "").strip() or "000000"
     routes[r["route_id"]] = [short, "#" + col.lstrip("#"), "#" + txt.lstrip("#"), (r.get("route_long_name") or "").strip()]
 
+# Nomes das paragens (para o destino, quando a Carris não o indica)
+stop_name = {s["stop_id"]: (s.get("stop_name") or "").strip() for s in rows("stops.txt")}
+
 # Viagens
 trips = {}
 svc_ids = {}
@@ -80,6 +83,8 @@ for p, TL in pat_trips.items():
     out_t = []
     for ti, (_, times, tid) in enumerate(TL):
         rid, svc, head = trips[tid]
+        if not head:
+            head = stop_name.get(stops_p[-1], "")
         out_t.append([svc] + times)
         for i, sid in enumerate(stops_p):
             if i == len(stops_p) - 1:
