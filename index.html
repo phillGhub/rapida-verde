@@ -680,7 +680,7 @@ function vDef(){
   <div class="card"><div class="lbl">Intermediário (Worker da Cloudflare)</div><div class="sub" style="margin:6px 0 8px">Necessário para o Metro e os comboios. Atual: <b>${esc(W())}</b></div>
   <div style="display:flex;gap:8px"><input class="q" id="wIn" placeholder="https://….workers.dev" style="margin:0;flex:1"><button class="btn" id="wSave" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div><div class="sub" id="wTest" style="margin-top:8px"></div><button class="btn" id="wTry">Testar ligações</button></div>
   <div class="card"><div class="lbl">Dados guardados</div><div class="sub" style="margin:6px 0">${favs.length} favoritos · listas de estações e paragens em cache</div><button class="btn" id="clr">Atualizar listas de estações e paragens</button></div>
-  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Carris (Lisboa): horários do GTFS oficial, atualizados todas as noites no GitHub.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
+  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Sobre</b><br>App não oficial e sem fins comerciais. Não tem qualquer ligação ao Metro de Lisboa, CP, Fertagus, Infraestruturas de Portugal, Carris, Carris Metropolitana/TML ou Rodoviária do Oeste. A tua localização e os teus favoritos ficam só neste telemóvel.<br><br><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Carris (Lisboa): horários do GTFS oficial, atualizados todas as noites no GitHub.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
   $("#wSave").onclick=()=>{let v=$("#wIn").value.trim();if(v&&!/^https?:\/\//.test(v))v="https://"+v;try{v?localStorage.setItem("rv_metro",v):localStorage.removeItem("rv_metro")}catch(e){}render()};
   $("#clr").onclick=()=>{["tp_cm","tp_cml","rv_estacoes","tp_cl"].forEach(k=>ls.set(k,null));CM=null;CML=null;CLS=null;$("#clr").textContent="✓ Vão ser descarregadas de novo";loadMetroStations();};
   $("#wTry").onclick=async()=>{const o=$("#wTest");o.innerHTML="A testar…";const r=[];
@@ -697,7 +697,7 @@ function vDef(){
 document.addEventListener("click",e=>{const o=e.target.closest("[data-open]");if(!o)return;try{state.board=JSON.parse(o.dataset.open);render()}catch(err){}});
 $("#tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.t;state.board=null;ls.set("tp_tab",state.tab);render();window.scrollTo(0,0)};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()});
-$("#foot").innerHTML=`Metro de Lisboa · CP · Fertagus · Carris · Carris Metropolitana · Rodoviária do Oeste<br>Horários e tempos são indicativos.`;
+$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
 startGPS();
 loadMetroStations().then(()=>{if(!state.board&&(state.tab==="metro"||state.tab==="perto"))render()});
 render();

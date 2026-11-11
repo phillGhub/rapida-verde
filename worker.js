@@ -21,6 +21,9 @@ const ORIGENS = ["https://phillghub.github.io"];
 const API = "https://api.metrolisboa.pt:8243";
 
 let tok = null, tokExp = 0;
+const LIMITE = 90;                 // pedidos por minuto por IP (a app usa ~15; o mapa ao vivo ~10)
+const CONTA = { min: 0, ip: new Map() };
+const CACHE_EST = new Map();       // respostas recentes por estação (poupa a chave do Metro)
 let est8 = null, est8t = 0;
 
 async function estadoLinhas(env) {
@@ -65,6 +68,21 @@ export default {
       "Content-Type": "application/json; charset=utf-8"
     };
     if (req.method === "OPTIONS") return new Response(null, { headers });
+
+    // Proteção 1: só responde a pedidos que venham da app (endereço de origem autorizado)
+    const ref = req.headers.get("Referer") || "";
+    if (!ORIGENS.includes(origin) && !ORIGENS.some(o => ref.startsWith(o + "/"))) {
+      return new Response(JSON.stringify({ ok: false, erro: "acesso não autorizado" }), { status: 403, headers });
+    }
+    // Proteção 2: no máximo LIMITE pedidos por minuto por endereço IP
+    const ip = req.headers.get("CF-Connecting-IP") || "?";
+    const min = Math.floor(Date.now() / 60000);
+    if (CONTA.min !== min) { CONTA.min = min; CONTA.ip = new Map(); }
+    const n = (CONTA.ip.get(ip) || 0) + 1;
+    CONTA.ip.set(ip, n);
+    if (n > LIMITE) {
+      return new Response(JSON.stringify({ ok: false, erro: "demasiados pedidos — espera um minuto" }), { status: 429, headers: { ...headers, "Retry-After": "60" } });
+    }
 
     const u = new URL(req.url);
     const p = u.searchParams.get("p");
@@ -126,6 +144,8 @@ export default {
       }
     }
     const est = (new URL(req.url).searchParams.get("estacao") || "CG").toUpperCase().replace(/[^A-Z]/g, "").slice(0, 3);
+    const c = CACHE_EST.get(est);
+    if (c && Date.now() - c.t < 5000) return new Response(c.body, { headers });
     try {
       const pedir = t => fetch(`${API}/estadoServicoML/1.0.1/tempoEspera/Estacao/${est}`, { headers: { Authorization: "Bearer " + t } });
       let r = await pedir(await token(env));
@@ -139,7 +159,10 @@ export default {
         destino: DEST[x.destino] || String(x.destino),
         s: [x.tempoChegada1, x.tempoChegada2, x.tempoChegada3].map(Number).filter(n => !isNaN(n))
       }));
-      return new Response(JSON.stringify({ ok: j.codigo === "200", estacao: est, atualizado: new Date().toISOString(), comboios, estado: await estadoLinhas(env) }), { headers });
+      const body = JSON.stringify({ ok: j.codigo === "200", estacao: est, atualizado: new Date().toISOString(), comboios, estado: await estadoLinhas(env) });
+      CACHE_EST.set(est, { t: Date.now(), body });
+      if (CACHE_EST.size > 80) CACHE_EST.clear();
+      return new Response(body, { headers });
     } catch (e) {
       return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
     }
