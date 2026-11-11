@@ -50,6 +50,7 @@ li.sel{background:rgba(140,198,63,.1);border-radius:10px}
 .btn{display:block;width:100%;border:1px solid var(--line);background:transparent;color:var(--mut);padding:10px;border-radius:12px;font:600 13px inherit;margin-top:10px;cursor:pointer}
 .status{border-color:var(--g2);background:linear-gradient(180deg,rgba(140,198,63,.12),var(--card))}
 .status .big2{font-size:22px;font-weight:700;margin-top:4px}
+.mwarn{background:rgba(239,107,91,.14);border:1px solid rgba(239,107,91,.4);color:#ffb4aa;border-radius:10px;padding:8px 10px;font-size:13px;margin-bottom:8px}
 footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-height:1.5}
 </style>
 </head>
@@ -500,7 +501,14 @@ function renderMetro(){
     }
   }else html+=`<div class="sub">Sem comboios ${goSouth?"para o Rato":"para o Campo Grande"} de momento${metro.aviso?" ("+metro.aviso+")":""}.</div>`;
   if(other.length)html+=`<div style="font-size:13px;color:var(--mut);margin-top:4px">${goSouth?"↑":"↓"} ${other.map(c=>c.destino+": "+c.s.slice(0,2).map(s=>mm(adj(s))).join(" · ")).join(" | ")}</div>`;
-  el.innerHTML=html;
+  // Problemas e atrasos
+  let warn="";const E=metro.estado||{};
+  if(E.amarela&&!E.amarela.ok)warn+=`<div class="mwarn">⚠️ <b>Linha Amarela:</b> ${E.amarela.texto}</div>`;
+  if(E.verde&&!E.verde.ok&&st.nome==="Campo Grande")warn+=`<div class="mwarn" style="opacity:.85">⚠️ Linha Verde: ${E.verde.texto}</div>`;
+  const hh=new Date().getHours();
+  if(!warn&&mine.length&&hh>=7&&hh<21&&adj(mine[0].s[0])>11*60)warn+=`<div class="mwarn">⏱️ Espera longa (${Math.round(adj(mine[0].s[0])/60)} min) — possível atraso na Linha Amarela.</div>`;
+  if(!warn&&E.amarela&&E.amarela.ok)warn=`<div class="sub" style="font-size:12px;color:var(--g)">✓ Linha Amarela: circulação normal</div>`;
+  el.innerHTML=warn+html;
   sub.textContent=(mManual?"escolhida por ti":gps.pos&&hav(gps.pos,[st.lat,st.lon])<0.7?"📍 estás aqui":"estação por defeito")+" · atualizado às "+new Date(metro.t).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
 

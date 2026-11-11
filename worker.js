@@ -8,6 +8,24 @@ const ORIGENS = ["https://phillghub.github.io"];
 const API = "https://api.metrolisboa.pt:8243";
 
 let tok = null, tokExp = 0;
+let est8 = null, est8t = 0;
+
+async function estadoLinhas(env) {
+  if (est8 && Date.now() - est8t < 60000) return est8;
+  try {
+    const r = await fetch(`${API}/estadoServicoML/1.0.1/estadoLinha/todos`, { headers: { Authorization: "Bearer " + await token(env) } });
+    const j = await r.json();
+    const R = j.resposta || {};
+    const out = {};
+    for (const l of ["amarela", "azul", "verde", "vermelha"]) {
+      if (R[l] == null) continue;
+      const txt = String(R[l]).trim();
+      out[l] = { ok: /^ok$/i.test(txt), texto: txt };
+    }
+    est8 = out; est8t = Date.now();
+  } catch (e) { /* estado indisponível: segue sem ele */ }
+  return est8 || {};
+}
 
 async function token(env, force) {
   if (!force && tok && Date.now() < tokExp - 60000) return tok;
@@ -55,14 +73,14 @@ export default {
       if (r.status === 401) r = await pedir(await token(env, true));
       const j = await r.json();
       if (!Array.isArray(j.resposta)) {
-        return new Response(JSON.stringify({ ok: true, estacao: est, atualizado: new Date().toISOString(), comboios: [], aviso: String(j.resposta || "sem dados"), codigo: j.codigo }), { headers });
+        return new Response(JSON.stringify({ ok: true, estacao: est, atualizado: new Date().toISOString(), comboios: [], aviso: String(j.resposta || "sem dados"), codigo: j.codigo, estado: await estadoLinhas(env) }), { headers });
       }
       const comboios = j.resposta.map(x => ({
         linha: LINHA[String(x.comboio || "").slice(-1)] || "?",
         destino: DEST[x.destino] || String(x.destino),
         s: [x.tempoChegada1, x.tempoChegada2, x.tempoChegada3].map(Number).filter(n => !isNaN(n))
       }));
-      return new Response(JSON.stringify({ ok: j.codigo === "200", estacao: est, atualizado: new Date().toISOString(), comboios }), { headers });
+      return new Response(JSON.stringify({ ok: j.codigo === "200", estacao: est, atualizado: new Date().toISOString(), comboios, estado: await estadoLinhas(env) }), { headers });
     } catch (e) {
       return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
     }
