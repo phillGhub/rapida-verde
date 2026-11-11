@@ -461,6 +461,7 @@ function renderMetro(){
   const row=(c,big)=>`<div style="${big?"":"font-size:13px;color:var(--mut)"}">${big?"🟡":"🟢"} <b style="color:var(--txt)">${c.destino}</b>: ${c.s.map(s=>mm(adj(s))).join(" · ")}</div>`;
   const am=metro.comboios.filter(c=>c.linha==="amarela"),ve=metro.comboios.filter(c=>c.linha==="verde");
   el.innerHTML=am.map(c=>row(c,true)).join("")+ve.map(c=>row(c,false)).join("");
+  if(!metro.comboios.length)el.innerHTML=`<div class="sub">Sem comboios de momento${metro.aviso?" ("+metro.aviso+")":""}.</div>`;
   sub.textContent="Atualizado às "+new Date(metro.t).toLocaleTimeString("pt-PT",{hour:"2-digit",minute:"2-digit",second:"2-digit"});
 }
 

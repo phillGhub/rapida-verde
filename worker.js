@@ -41,7 +41,10 @@ export default {
       let r = await pedir(await token(env));
       if (r.status === 401) r = await pedir(await token(env, true));
       const j = await r.json();
-      const comboios = (j.resposta || []).map(x => ({
+      if (!Array.isArray(j.resposta)) {
+        return new Response(JSON.stringify({ ok: true, estacao: est, atualizado: new Date().toISOString(), comboios: [], aviso: String(j.resposta || "sem dados"), codigo: j.codigo }), { headers });
+      }
+      const comboios = j.resposta.map(x => ({
         linha: LINHA[String(x.comboio || "").slice(-1)] || "?",
         destino: DEST[x.destino] || String(x.destino),
         s: [x.tempoChegada1, x.tempoChegada2, x.tempoChegada3].map(Number).filter(n => !isNaN(n))
