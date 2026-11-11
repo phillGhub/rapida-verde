@@ -134,12 +134,31 @@ async function ext(p,u,ms){
 // ======================================================================
 // GPS
 // ======================================================================
-const gps={pos:null,acc:null,err:null,t:0};
+const gps={pos:null,acc:null,err:null,code:null,t:0,watch:null};
 function startGPS(){
-  if(!navigator.geolocation){gps.err="sem GPS";return}
-  const ok=p=>{const first=!gps.pos;gps.pos=[p.coords.latitude,p.coords.longitude];gps.acc=p.coords.accuracy;gps.err=null;gps.t=Date.now();if(first&&state.tab==="perto"&&!state.board)render()};
-  const bad=e=>{gps.err=e.code===1?"localização recusada":e.code===2?"sem sinal":"a procurar…";if(state.tab==="perto"&&!state.board&&!gps.pos)render()};
-  try{navigator.geolocation.getCurrentPosition(ok,bad,{maximumAge:60000,timeout:15000});navigator.geolocation.watchPosition(ok,bad,{enableHighAccuracy:true,maximumAge:10000,timeout:30000})}catch(e){gps.err="erro"}
+  if(!window.isSecureContext){gps.err="precisa de https";gps.code=9;paintGps();return}
+  if(!navigator.geolocation){gps.err="este browser não tem GPS";gps.code=9;paintGps();return}
+  if(gps.watch!=null)try{navigator.geolocation.clearWatch(gps.watch)}catch(e){}
+  gps.err=null;gps.code=null;paintGps();
+  const ok=p=>{const first=!gps.pos;gps.pos=[p.coords.latitude,p.coords.longitude];gps.acc=p.coords.accuracy;gps.err=null;gps.code=null;gps.t=Date.now();paintGps();if(first&&state.tab==="perto"&&!state.board)render()};
+  const bad=e=>{gps.code=e.code;gps.err=e.code===1?"localização recusada":e.code===2?"sem sinal de GPS":"GPS a demorar";paintGps()};
+  try{navigator.geolocation.getCurrentPosition(ok,bad,{maximumAge:60000,timeout:15000});gps.watch=navigator.geolocation.watchPosition(ok,bad,{enableHighAccuracy:true,maximumAge:10000,timeout:30000})}catch(e){gps.err="erro no GPS";gps.code=9;paintGps()}
+}
+// Indicador do estado do GPS (topo de "Perto de ti")
+function gpsInfo(){
+  const age=gps.t?(Date.now()-gps.t)/1000:null;
+  const ago=age==null?"":age<60?`há ${Math.max(1,Math.round(age))} s`:age<3600?`há ${Math.round(age/60)} min`:"há mais de 1 h";
+  if(gps.code===1)return{c:"var(--red)",i:"⛔",t:"GPS bloqueado",s:"O iPhone não está a dar a localização à app · toca para ver como resolver"};
+  if(gps.code===9)return{c:"var(--red)",i:"⛔",t:"Sem GPS",s:gps.err};
+  if(gps.pos&&age<60)return{c:"var(--g)",i:"●",t:"GPS a funcionar",s:`precisão ±${Math.round(gps.acc||0)} m · atualizado ${ago}`};
+  if(gps.pos)return{c:"var(--warn)",i:"●",t:"GPS sem sinal recente",s:`última posição ${ago}${gps.err?" · "+gps.err:""} · toca para tentar de novo`};
+  if(gps.err)return{c:"var(--warn)",i:"●",t:gps.err==="sem sinal de GPS"?"Sem sinal de GPS":"GPS a demorar",s:"Toca para tentar de novo"};
+  return{c:"var(--mut)",i:"◌",t:"À procura do GPS…",s:"Pode demorar alguns segundos"};
+}
+function paintGps(){
+  const el=document.getElementById("gpsPill");if(!el)return;const g=gpsInfo();
+  el.style.borderColor=g.c;el.innerHTML=`<span style="color:${g.c};font-size:18px;line-height:1${g.i==="●"&&g.c==="var(--g)"?";animation:p 1.6s infinite":""}">${g.i}</span><span style="flex:1"><b style="color:${g.c}">${g.t}</b><div class="sub" style="font-size:12px">${esc(g.s)}</div></span>`;
+  const help=document.getElementById("gpsHelp");if(help&&gps.pos&&!gps.code)help.style.display="none";
 }
 
 // ======================================================================
@@ -538,7 +557,8 @@ function render(){
 
 // ---- Perto
 function vPerto(){
-  let h=`<h2>Perto de ti</h2>`;
+  let h=`<h2>Perto de ti</h2><div id="gpsPill" class="card tap" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer"></div>
+  <div id="gpsHelp" class="card sub" style="display:none;line-height:1.6;color:var(--txt)"><b>Para dar a localização à app:</b><br>1. Definições → Privacidade e segurança → Serviços de localização → ligados.<br>2. Na mesma página: <b>Sites do Safari</b> → <b>Durante a utilização</b>, com “Localização exata” ligada.<br>3. Se usas a app pelo ecrã principal, fecha-a e abre de novo; no Safari, toca em <b>aA</b> → Definições do site → Localização → <b>Permitir</b>.</div>`;
   const fl=favs.slice();
   if(fl.length)h+=`<div class="lbl" style="margin:4px 2px 8px">⭐ Favoritos</div>`+fl.map(f=>cardShell(f,f.extra)).join("");
   let near=[];
@@ -551,14 +571,15 @@ function vPerto(){
       .forEach(x=>{const f={tipo:"cl",id:x.s[0],nome:x.s[1]};if(!isFav(f))near.push([f,"Carris · "+dist(x.d)])})}
   }
   h+=`<div class="lbl" style="margin:14px 2px 8px">📍 À tua volta</div>`;
-  if(!gps.pos)h+=`<div class="card sub">${gps.err?"GPS: "+esc(gps.err)+". Em Definições → Privacidade → Localização → Sites do Safari, escolhe “Durante a utilização”.":"À procura da tua localização…"}</div>`;
-  else if(!near.length)h+=`<div class="card sub">Não há estações de metro nem paragens da Carris Metropolitana muito perto${CM?"":" (a carregar paragens…)"}. Procura nos separadores em baixo.</div>`;
+  if(!gps.pos)h+=`<div class="card sub">Sem a tua localização, não consigo mostrar o que está perto. Os favoritos funcionam na mesma.</div>`;
+  else if(!near.length)h+=`<div class="card sub">Não há estações de metro nem paragens da Carris ou da Carris Metropolitana a menos de 500 m${CM&&CLS?"":" (a carregar paragens…)"}. Procura nos separadores em baixo.</div>`;
   h+=near.map(([f,s])=>cardShell(f,s)).join("");
   if(!fl.length)h+=`<div class="card sub">Dica: abre uma estação ou paragem e toca na ⭐ para a teres sempre aqui.</div>`;
   $("#view").innerHTML=h;
   const all=[...fl,...near.map(x=>x[0])];
   const go=()=>all.forEach(f=>fillCard(f,f.tipo==="cp"?4:3));
-  go();timer=setInterval(()=>{if(!document.hidden){$("#clock").textContent=hm(new Date());go()}},20e3);
+  paintGps();$("#gpsPill").onclick=()=>{const blq=gps.code===1;startGPS();if(blq){const hp=$("#gpsHelp");hp.style.display=hp.style.display==="none"?"":"none"}};
+  let tk=0;go();timer=setInterval(()=>{if(document.hidden)return;paintGps();if(++tk%4===0){$("#clock").textContent=hm(new Date());go()}},5e3);
   if(!CLS&&gps.pos)loadCL().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
   if(!CM&&gps.pos)loadCM().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
 }
