@@ -366,11 +366,11 @@ function destinosCP(b){
 function chegaA(r,dest){
   if(!dest)return null;const k=norm(dest);
   if(r.stops){const s=r.stops.find(x=>norm(x.nome)===k);if(!s)return false;let m=toMin(s.prev||s.t);if(m<r.m-60)m+=1440;return s.prev?m:m+r.atraso}
-  return norm(r.dest).includes(k)?undefined:false; // sem paragens: só sabemos se é o destino final
+  return norm(r.dest).includes(k)?undefined:"?"; // sem paragens: só sabemos se é o destino final
 }
 function cpRowsHTML(b,max=12,filtro="",aberto=""){
   const nm=nowMin();let L=b.L,fora=0;
-  if(filtro){L=L.filter(r=>{const c=chegaA(r,filtro);if(c===false){fora++;return false}return true})}
+  if(filtro){L=L.filter(r=>{const c=chegaA(r,filtro);if(c===false){fora++;return false}return c!=="?"})}
   if(!L.length)return `<div class="empty">Sem comboios nas próximas 4 horas${filtro?" que parem em "+esc(filtro):""}.</div>`;
   return L.slice(0,max).map(r=>{const d=r.real-nm;
     const st=r.sup?`<b class="bad">Suprimido</b>`:r.atraso?`<span class="late">+${r.atraso} min · parte ${fmtMin(r.real)}</span>`:"";
@@ -417,6 +417,56 @@ function cmRowsHTML(b,max=10){
       <span class="in">${d<1?"a chegar":d<90?Math.round(d)+" min":""}<small>${hm(new Date(a.ts))}</small></span></div>`}).join("");
 }
 
+
+// ======================================================================
+// AUTOCARROS · Carris (Lisboa) — horários do GTFS oficial, preparados pelo processo "Dados Carris" no GitHub
+// ======================================================================
+const CL=()=>{try{const o=localStorage.getItem("tp_clbase");if(o)return o.replace(/\/$/,"")}catch(e){}
+  const m=location.hostname.match(/^([^.]+)\.github\.io$/),repo=location.pathname.split("/")[1];
+  return m&&repo?`https://raw.githubusercontent.com/${m[1]}/${repo}/dados/carris`:"https://raw.githubusercontent.com/phillGhub/rapida-verde/dados/carris"};
+let CLS=null,CLR=null,CLC=null,CLM=null;
+async function loadCL(){
+  if(CLS)return CLS;
+  const c=ls.get("tp_cl",null);
+  if(c&&Date.now()-c.t<864e5&&c.cal&&c.cal[iso(new Date())]){CLS=c.s;CLR=c.r;CLC=c.cal}
+  else{const[s,r,cal]=await Promise.all(["stops","routes","cal"].map(n=>getJSON(CL()+"/"+n+".json",25000)));CLS=s;CLR=r;CLC=cal;ls.set("tp_cl",{t:Date.now(),s,r,cal})}
+  CLM=new Map(CLS.map(x=>[x[0],x]));return CLS;
+}
+const clFiles={};
+async function clFile(p){const c=clFiles[p];if(c&&Date.now()-c.t<36e5)return c.j;const j=await getJSON(CL()+"/"+p,20000);clFiles[p]={t:Date.now(),j};return j}
+const clNome=id=>(CLM&&CLM.get(id)||[id,id])[1];
+async function clBoard(id){
+  await loadCL();const f=await clFile("s/"+id+".json");const now=Date.now(),L=[];
+  [1,0].forEach(back=>{const D=new Date();D.setHours(0,0,0,0);D.setDate(D.getDate()-back);const on=new Set(CLC[iso(D)]||[]),d0=D.getTime();
+    f.d.forEach(e=>{if(!on.has(e[5]))return;const ts=d0+e[0]*60000;if(ts<now-60e3||ts>now+4*3600e3)return;
+      L.push({ts,line:e[1],dest:f.h[e[2]],p:e[3],ti:e[4],i:e[6],key:e[3]+":"+e[4]+":"+back})})});
+  L.sort((a,b)=>a.ts-b.ts);return{L,t:now};
+}
+async function clStops(r){
+  const P=await clFile("p/"+r.p+".json");const T=P.t[r.ti];if(!T)throw new Error("viagem não encontrada");
+  const base=T[1+r.i];r.stops=P.s.slice(r.i+1).map((sid,k)=>({nome:clNome(sid),ts:r.ts+(T[2+r.i+k]-base)*60000}));return r;
+}
+async function clEnrich(b,n=9999){await Promise.all(b.L.slice(0,n).map(r=>r.stops?0:clStops(r).catch(()=>{r.stopsErr=1})));b.enriched=true;return b}
+function clBadge(rid){const l=(CLR||{})[rid]||[rid,"#F9C500","#000"];return `<span class="badge" style="background:${esc(l[1])};color:${esc(l[2])}">${esc(l[0])}</span>`}
+function clRowsHTML(b,max=12,filtro="",aberto=""){
+  let L=b.L,fora=0;const k=norm(filtro);
+  const chega=r=>{if(!k)return null;if(!r.stops)return norm(r.dest).includes(k)?undefined:r.stopsErr?undefined:false;const s=r.stops.find(x=>norm(x.nome)===k);return s?s.ts:false};
+  if(k)L=L.filter(r=>{const c=chega(r);if(c===false){fora++;return false}return true});
+  if(!L.length)return `<div class="empty">Sem partidas nas próximas 4 horas${k?" que passem em "+esc(filtro):""}.</div>`;
+  return L.slice(0,max).map(r=>{const d=(r.ts-Date.now())/60000,c=chega(r),open=aberto===r.key;
+    const chH=typeof c==="number"?`<div style="margin-top:3px;font-size:14px;color:var(--g);font-weight:600">→ ${esc(filtro)} às ${hm(new Date(c))} <span class="sub">· ${Math.round((c-r.ts)/60000)} min de viagem · chegas daqui a ${Math.max(0,Math.round((c-Date.now())/60000))} min</span></div>`:"";
+    const lista=open?(r.stops?`<div style="margin:6px 0 4px 56px;border-left:3px solid var(--line);padding-left:10px">${r.stops.map(s=>`<div class="tap" data-stop="${esc(s.nome)}" style="display:flex;gap:10px;padding:5px 0;font-size:14px;${norm(s.nome)===k?"color:var(--g);font-weight:700":""}"><span style="font-variant-numeric:tabular-nums;min-width:44px">${hm(new Date(s.ts))}</span><span style="flex:1">${esc(s.nome)}</span></div>`).join("")}<div class="sub" style="font-size:11px">Toca numa paragem para a escolheres como destino.</div></div>`:`<div class="sub" style="margin:4px 0 6px 56px">${r.stopsErr?"Não consegui obter as paragens.":"A carregar paragens…"}</div>`):"";
+    return `<div class="row tap" data-train="${esc(r.key)}" style="flex-wrap:wrap">${clBadge(r.line)}<span class="m"><b>${esc(r.dest)}</b><small>horário</small>${chH}</span>
+      <span class="in">${d<1?"a sair":d<90?Math.round(d)+" min":""}<small>${hm(new Date(r.ts))} ${open?"▴":"▾"}</small></span>${lista?`<div style="flex-basis:100%">${lista}</div>`:""}</div>`}).join("")+(fora?`<div class="sub" style="padding:6px 4px">${fora} ${fora===1?"partida não passa":"partidas não passam"} em ${esc(filtro)}.</div>`:"");
+}
+function clSearch(){
+  const res=$("#res");if(!res||!CLS)return;const v=norm(state.qc||"");const S=CLS.filter(s=>s[5]);
+  let L;
+  if(v.length>=3)L=S.filter(s=>norm(s[1]).includes(v)||s[0]===(state.qc||"").trim()||s[4].split(",").includes((state.qc||"").trim().toUpperCase())).slice(0,20).map(s=>[s,gps.pos?hav(gps.pos,[s[2],s[3]]):null]);
+  else if(gps.pos)L=S.map(s=>[s,hav(gps.pos,[s[2],s[3]])]).sort((a,b)=>a[1]-b[1]).slice(0,8);
+  else{res.innerHTML=`<div class="empty">Escreve o nome da paragem ou o número da carreira, ou liga o GPS para veres as mais próximas.</div>`;return}
+  res.innerHTML=(v.length<3?`<div class="lbl" style="margin:4px 2px 8px">Paragens mais próximas</div>`:"")+(L.length?`<div class="card">${L.map(([s,d])=>`<div class="row tap" data-open='${esc(JSON.stringify({tipo:"cl",id:s[0],nome:s[1]}))}'><span>🚏</span><span class="m"><b>${esc(s[1])}</b><small>paragem ${esc(s[0])}${s[4]?" · "+esc(s[4].split(",").slice(0,8).join(", ")):""}</small></span><span class="sub">${d!=null?dist(d):""} ›</span></div>`).join("")}</div>`:`<div class="empty">Nenhuma paragem encontrada.</div>`);
+}
 // ======================================================================
 // AUTOCARROS · Rodoviária do Oeste (horários)
 // ======================================================================
@@ -435,11 +485,12 @@ function rdoList(linha,sent,fds){
 const cache={};
 async function board(f){
   const k=favKey(f),c=cache[k],ttl=f.tipo==="cp"?45e3:f.tipo==="rdo"?6e4:18e3;
-  if(c&&Date.now()-c.t<ttl){if(f.tipo==="cp"&&c.L&&!c.enriched&&(f.filtro||state.board===f))await cpEnrich(c,f.nome,state.board===f?10:6);return c}
+  if(c&&Date.now()-c.t<ttl){if(c.L&&!c.enriched&&(f.filtro||state.board===f)){if(f.tipo==="cp")await cpEnrich(c,f.nome,state.board===f?10:6);if(f.tipo==="cl")await clEnrich(c)}return c}
   let b;
   if(f.tipo==="metro"){if(metroClosed())b={closed:true,t:Date.now()};else b=await metroBoard(f.id)}
   else if(f.tipo==="cp"){b=await cpBoard(f.id,f.nome);if(f.filtro||state.board===f)await cpEnrich(b,f.nome,state.board===f?10:6)}
   else if(f.tipo==="cm")b=await cmBoard(f.id);
+  else if(f.tipo==="cl"){b=await clBoard(f.id);if(f.filtro||state.board===f)await clEnrich(b)}
   else if(f.tipo==="rdo")b={t:Date.now()};
   cache[k]=b;return b;
 }
@@ -457,9 +508,10 @@ function bodyHTML(f,b,max){
   if(f.tipo==="metro"){const d=destDe(f.id);return estadoHTML(EST[f.id]?.linhas)+(d&&EST[d]?chegadaHTML(f.id,d,b,max<=4):"")+metroGruposHTML(b,max>4?4:2,max<=4)}
   if(f.tipo==="cp")return cpRowsHTML(b,max,f.filtro||"",f.aberto||"");
   if(f.tipo==="cm")return cmRowsHTML(b,max);
+  if(f.tipo==="cl")return clRowsHTML(b,max,f.filtro||"",f.aberto||"");
   return"";
 }
-const ICON={metro:"Ⓜ️",cp:"🚆",cm:"🚌",rdo:"🚌"};
+const ICON={metro:"Ⓜ️",cp:"🚆",cm:"🚌",cl:"🚍",rdo:"🚌"};
 function cardShell(f,sub){
   const id="c_"+favKey(f).replace(/[^a-zA-Z0-9]/g,"_");
   return `<div class="card" id="${id}"><div class="head row tap" data-open='${esc(JSON.stringify(f))}' style="border:0;padding:0 0 4px"><span style="font-size:20px">${ICON[f.tipo]}</span><span class="ttl">${esc(f.nome)}${sub?`<div class="sub" style="font-weight:500">${sub}</div>`:""}</span><span class="sub">›</span></div><div class="cb">${f.tipo==="rdo"?rdoHTML(f,3):'<div class="empty">A carregar…</div>'}</div></div>`;
@@ -495,6 +547,8 @@ function vPerto(){
     ms.forEach(x=>{const f={tipo:"metro",id:x.e.id,nome:x.e.nome};if(!isFav(f))near.push([f,"Metro · "+dist(x.d)])});
     if(CM){CM.map(s=>({s,d:hav(gps.pos,[s[2],s[3]])})).sort((a,b)=>a.d-b.d).filter(x=>x.d<0.6).slice(0,3)
       .forEach(x=>{const f={tipo:"cm",id:x.s[0],nome:x.s[1]};if(!isFav(f))near.push([f,"Carris Metropolitana · "+dist(x.d)])})}
+    if(CLS){CLS.filter(s=>s[5]).map(s=>({s,d:hav(gps.pos,[s[2],s[3]])})).sort((a,b)=>a.d-b.d).filter(x=>x.d<0.5).slice(0,3)
+      .forEach(x=>{const f={tipo:"cl",id:x.s[0],nome:x.s[1]};if(!isFav(f))near.push([f,"Carris · "+dist(x.d)])})}
   }
   h+=`<div class="lbl" style="margin:14px 2px 8px">📍 À tua volta</div>`;
   if(!gps.pos)h+=`<div class="card sub">${gps.err?"GPS: "+esc(gps.err)+". Em Definições → Privacidade → Localização → Sites do Safari, escolhe “Durante a utilização”.":"À procura da tua localização…"}</div>`;
@@ -505,6 +559,7 @@ function vPerto(){
   const all=[...fl,...near.map(x=>x[0])];
   const go=()=>all.forEach(f=>fillCard(f,f.tipo==="cp"?4:3));
   go();timer=setInterval(()=>{if(!document.hidden){$("#clock").textContent=hm(new Date());go()}},20e3);
+  if(!CLS&&gps.pos)loadCL().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
   if(!CM&&gps.pos)loadCM().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
 }
 
@@ -551,8 +606,16 @@ async function doSearch(v){
 
 // ---- Autocarros
 function vAutocarros(){
-  let h=`<h2>Autocarros</h2><div class="seg" id="bseg"><button data-b="cm" class="${state.bus==="cm"?"on":""}">Carris Metropolitana</button><button data-b="rdo" class="${state.bus==="rdo"?"on":""}">Rodoviária do Oeste</button></div>`;
-  if(state.bus==="cm"){
+  let h=`<h2>Autocarros</h2><div class="seg" id="bseg"><button data-b="cl" class="${state.bus==="cl"?"on":""}">Carris Lisboa</button><button data-b="cm" class="${state.bus==="cm"?"on":""}">Carris Metropolitana</button><button data-b="rdo" class="${state.bus==="rdo"?"on":""}">RDO</button></div>`;
+  if(state.bus==="cl"){
+    h+=`<div class="hint">Autocarros e elétricos da Carris dentro de Lisboa · horários oficiais (sem tempo real, por agora)</div><input class="q" id="q" placeholder="Procurar paragem, rua ou carreira (ex.: 738, 28E)" value="${esc(state.qc||"")}" autocomplete="off"><div id="res"></div>`;
+    const fv=favs.filter(f=>f.tipo==="cl");
+    if(fv.length)h+=`<div class="lbl" style="margin:8px 2px">⭐ Favoritas</div>`+fv.map(f=>cardShell(f,f.filtro?"até "+f.filtro:"")).join("");
+    $("#view").innerHTML=h;fv.forEach(f=>fillCard(f,4));
+    const q=$("#q");q.oninput=()=>{state.qc=q.value;clSearch()};
+    $("#res").innerHTML=`<div class="empty">A carregar paragens…</div>`;
+    loadCL().then(()=>{if(state.tab==="autocarros"&&state.bus==="cl"&&!state.board)clSearch()}).catch(e=>{$("#res").innerHTML=`<div class="card sub">⚠️ Ainda não há dados da Carris (${esc(e.message)}). No GitHub, abre o separador <b>Actions</b> → <b>Dados Carris</b> → <b>Run workflow</b>, espera uns minutos e volta aqui.</div>`});
+  }else if(state.bus==="cm"){
     h+=`<div class="hint">Toda a área metropolitana de Lisboa (exceto as carreiras urbanas de Lisboa, Barreiro e Cascais) · tempos em direto</div><input class="q" id="q" placeholder="Procurar paragem ou rua" value="${esc(state.qb||"")}" autocomplete="off"><div id="res"></div>`;
     const fv=favs.filter(f=>f.tipo==="cm");
     if(fv.length)h+=`<div class="lbl" style="margin:8px 2px">⭐ Favoritas</div>`+fv.map(f=>cardShell(f)).join("");
@@ -585,29 +648,30 @@ function renderBoard(){
   const f=state.board;addRecent(f);
   const fv=favs.find(x=>favKey(x)===favKey(f));if(fv&&fv.filtro&&f.filtro==null)f.filtro=fv.filtro;
   const fav=isFav(f);
-  let sub=f.tipo==="metro"?(EST[f.id]?.linhas||[]).map(l=>`<span style="color:${LINHAS[l].cor}">●</span> ${LINHAS[l].nome}`).join(" "):f.tipo==="cp"?"Partidas · CP e Fertagus":f.tipo==="cm"?"Carris Metropolitana · paragem "+esc(f.id):f.tipo==="rdo"?"Rodoviária do Oeste · horário":"";
+  let sub=f.tipo==="metro"?(EST[f.id]?.linhas||[]).map(l=>`<span style="color:${LINHAS[l].cor}">●</span> ${LINHAS[l].nome}`).join(" "):f.tipo==="cp"?"Partidas · CP e Fertagus":f.tipo==="cm"?"Carris Metropolitana · paragem "+esc(f.id):f.tipo==="cl"?"Carris · paragem "+esc(f.id)+" · horário":f.tipo==="rdo"?"Rodoviária do Oeste · horário":"";
   let h=`<button class="back" id="back">‹ Voltar</button><div class="card"><div class="head"><span style="font-size:22px">${ICON[f.tipo]}</span><span class="ttl">${esc(f.nome)}<div class="sub" style="font-weight:500">${sub}</div></span><button class="star ${fav?"on":""}" id="star" aria-label="Favorito">${fav?"★":"☆"}</button></div>`;
   if(f.tipo==="metro")h+=destSelectHTML(f.id,destDe(f.id));
-  if(f.tipo==="cp")h+=`<select id="filt" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:12px;padding:10px;font:15px inherit;margin:6px 0 4px"><option value="">Para onde vais? (a carregar estações…)</option>${f.filtro?`<option selected>${esc(f.filtro)}</option>`:""}</select>`;
+  if(f.tipo==="cp"||f.tipo==="cl")h+=`<select id="filt" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:12px;padding:10px;font:15px inherit;margin:6px 0 4px"><option value="">Para onde vais? (a carregar estações…)</option>${f.filtro?`<option selected>${esc(f.filtro)}</option>`:""}</select>`;
   h+=`<div id="bb"><div class="empty">A carregar…</div></div><div class="sub" id="upd" style="font-size:11px;margin-top:8px"></div></div>`;
   if(f.tipo==="metro")h+=`<div class="card">${(EST[f.id]?.linhas||[]).map(l=>`<button class="btn" data-line="${l}" style="margin-top:6px">🗺️ Linha ${LINHAS[l].nome} ao vivo</button>`).join("")}</div>`;
   if(f.tipo==="rdo"&&f.id.startsWith("rv:"))h+=`<a class="card" href="rapida-verde.html" style="display:block;text-decoration:none;color:var(--g)">Abrir a Rápida Verde em modo viagem (GPS e chegada estimada) →</a>`;
   $("#view").innerHTML=h;window.scrollTo(0,0);
   $("#back").onclick=()=>{state.board=null;render()};
   $("#star").onclick=()=>{toggleFav(f);const on=isFav(f);$("#star").classList.toggle("on",on);$("#star").textContent=on?"★":"☆"};
-  const setFiltro=v=>{f.filtro=v;const i=favs.findIndex(x=>favKey(x)===favKey(f));if(i>=0){favs[i].filtro=f.filtro;ls.set("tp_favs",favs)}const o=ls.get("tp_cpdest",{})||{};if(v)o[f.id]=v;else delete o[f.id];ls.set("tp_cpdest",o);fillSel(cache[favKey(f)]);paint(cache[favKey(f)])};
-  if(f.tipo==="cp"&&f.filtro==null)f.filtro=(ls.get("tp_cpdest",{})||{})[f.id]||"";
+  const setFiltro=v=>{f.filtro=v;const i=favs.findIndex(x=>favKey(x)===favKey(f));if(i>=0){favs[i].filtro=f.filtro;ls.set("tp_favs",favs)}const o=ls.get("tp_cpdest",{})||{};if(v)o[favKey(f)]=v;else delete o[favKey(f)];ls.set("tp_cpdest",o);fillSel(cache[favKey(f)]);paint(cache[favKey(f)])};
+  if((f.tipo==="cp"||f.tipo==="cl")&&f.filtro==null)f.filtro=(ls.get("tp_cpdest",{})||{})[favKey(f)]||"";
   const filt=$("#filt");if(filt)filt.onchange=()=>setFiltro(filt.value);
   const fillSel=b=>{const el=$("#filt");if(!el||!b||!b.L)return;const D=destinosCP(b);if(f.filtro&&!D.some(x=>norm(x)===norm(f.filtro)))D.unshift(f.filtro);
     el.innerHTML=`<option value="">Para onde vais? (todas as partidas)</option>`+D.map(x=>`<option ${norm(x)===norm(f.filtro||"")?"selected":""}>${esc(x)}</option>`).join("")};
-  if(f.tipo==="cp")$("#bb").onclick=e=>{const st=e.target.closest("[data-stop]");if(st){e.stopPropagation();setFiltro(st.dataset.stop);return}
+  if(f.tipo==="cp"||f.tipo==="cl")$("#bb").onclick=e=>{const st=e.target.closest("[data-stop]");if(st){e.stopPropagation();setFiltro(st.dataset.stop);return}
     const t=e.target.closest("[data-train]");if(!t)return;f.aberto=f.aberto===t.dataset.train?"":t.dataset.train;const b=cache[favKey(f)];paint(b);
+    if(f.tipo==="cl"){const r=b&&b.L.find(x=>x.key===f.aberto);if(r&&!r.stops&&!r.stopsErr)clStops(r).then(()=>paint(b)).catch(()=>{r.stopsErr=1;paint(b)});return}
     const r=b&&b.L.find(x=>x.num===f.aberto);if(r&&!r.stops&&!r.stopsErr)cpTrain(r.num).then(T=>{const i=T.stops.findIndex(x=>norm(x.nome)===norm(f.nome));r.stops=i>=0?T.stops.slice(i+1):T.stops;paint(b)}).catch(()=>{r.stopsErr=1;paint(b)})};
   document.querySelectorAll("[data-line]").forEach(b=>b.onclick=()=>{state.board=null;state.tab="metro";state.mLinha=b.dataset.line;state.lineOpen=true;ls.set("tp_tab","metro");render()});
   const ds=$("#dest");if(ds)ds.onchange=()=>{setDest(f.id,ds.value);paint(cache[favKey(f)])};
-  const paint=b=>{if(f.tipo==="cp")fillSel(b);$("#bb").innerHTML=bodyHTML(f,b,f.tipo==="cp"?20:f.tipo==="cm"?15:f.tipo==="rdo"?40:6);$("#upd").textContent=b&&b.t?"Atualizado às "+new Date(b.t).toLocaleTimeString("pt-PT"):""};
-  const load=async(force)=>{if(force)delete cache[favKey(f)];let b;try{b=await board(f)}catch(e){b={err:e.message+(f.tipo!=="metro"?" — confirma que o Worker está atualizado":"")}}if(state.board===f)paint(b)};
-  load();timer=setInterval(()=>{if(!document.hidden)load(true)},f.tipo==="cp"?45e3:20e3);
+  const paint=b=>{if(f.tipo==="cp"||f.tipo==="cl")fillSel(b);$("#bb").innerHTML=bodyHTML(f,b,f.tipo==="cp"?20:f.tipo==="cm"||f.tipo==="cl"?15:f.tipo==="rdo"?40:6);$("#upd").textContent=b&&b.t?"Atualizado às "+new Date(b.t).toLocaleTimeString("pt-PT"):""};
+  const load=async(force)=>{if(force)delete cache[favKey(f)];let b;try{b=await board(f)}catch(e){b={err:e.message+(f.tipo==="cl"?" — corre o processo “Dados Carris” no GitHub (Actions)":f.tipo!=="metro"?" — confirma que o Worker está atualizado":"")}}if(state.board===f)paint(b)};
+  load();timer=setInterval(()=>{if(!document.hidden)load(true)},f.tipo==="cp"?45e3:f.tipo==="cl"?60e3:20e3);
 }
 
 // ---- Ajustes
@@ -616,14 +680,15 @@ function vDef(){
   <div class="card"><div class="lbl">Intermediário (Worker da Cloudflare)</div><div class="sub" style="margin:6px 0 8px">Necessário para o Metro e os comboios. Atual: <b>${esc(W())}</b></div>
   <div style="display:flex;gap:8px"><input class="q" id="wIn" placeholder="https://….workers.dev" style="margin:0;flex:1"><button class="btn" id="wSave" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div><div class="sub" id="wTest" style="margin-top:8px"></div><button class="btn" id="wTry">Testar ligações</button></div>
   <div class="card"><div class="lbl">Dados guardados</div><div class="sub" style="margin:6px 0">${favs.length} favoritos · listas de estações e paragens em cache</div><button class="btn" id="clr">Atualizar listas de estações e paragens</button></div>
-  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
+  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Carris (Lisboa): horários do GTFS oficial, atualizados todas as noites no GitHub.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
   $("#wSave").onclick=()=>{let v=$("#wIn").value.trim();if(v&&!/^https?:\/\//.test(v))v="https://"+v;try{v?localStorage.setItem("rv_metro",v):localStorage.removeItem("rv_metro")}catch(e){}render()};
-  $("#clr").onclick=()=>{["tp_cm","tp_cml","rv_estacoes"].forEach(k=>ls.set(k,null));CM=null;CML=null;$("#clr").textContent="✓ Vão ser descarregadas de novo";loadMetroStations();};
+  $("#clr").onclick=()=>{["tp_cm","tp_cml","rv_estacoes","tp_cl"].forEach(k=>ls.set(k,null));CM=null;CML=null;CLS=null;$("#clr").textContent="✓ Vão ser descarregadas de novo";loadMetroStations();};
   $("#wTry").onclick=async()=>{const o=$("#wTest");o.innerHTML="A testar…";const r=[];
     const t=async(n,fn)=>{try{await fn();r.push("✓ "+n)}catch(e){r.push("✗ "+n+" ("+esc(e.message)+")")}o.innerHTML=r.join("<br>")};
     await t("Metro",()=>getJSON(W()+"/?estacao=CG").then(j=>{if(j.ok===false&&!j.aviso)throw new Error(j.erro||"sem dados")}));
     await t("Comboios (IP)",()=>cpSearch("Oriente").then(L=>{if(!L.length)throw new Error("resposta vazia")}));
-    await t("Carris Metropolitana",()=>ext("cm","/v2/lines"));};
+    await t("Carris Metropolitana",()=>ext("cm","/v2/lines"));
+    await t("Carris Lisboa (dados de "+(await getJSON(CL()+"/meta.json").then(m=>new Date(m.gerado).toLocaleDateString("pt-PT")).catch(()=>"?"))+")",()=>getJSON(CL()+"/meta.json"));};
 }
 
 // ======================================================================
@@ -632,7 +697,7 @@ function vDef(){
 document.addEventListener("click",e=>{const o=e.target.closest("[data-open]");if(!o)return;try{state.board=JSON.parse(o.dataset.open);render()}catch(err){}});
 $("#tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.t;state.board=null;ls.set("tp_tab",state.tab);render();window.scrollTo(0,0)};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()});
-$("#foot").innerHTML=`Metro de Lisboa · CP · Fertagus · Carris Metropolitana · Rodoviária do Oeste<br>Horários e tempos são indicativos.`;
+$("#foot").innerHTML=`Metro de Lisboa · CP · Fertagus · Carris · Carris Metropolitana · Rodoviária do Oeste<br>Horários e tempos são indicativos.`;
 startGPS();
 loadMetroStations().then(()=>{if(!state.board&&(state.tab==="metro"||state.tab==="perto"))render()});
 render();

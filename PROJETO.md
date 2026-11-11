@@ -15,6 +15,7 @@ App geral de transportes: Metro de Lisboa (4 linhas), comboios (CP e Fertagus, v
 | `rapida-verde.html` | Modo viagem da Rápida Verde (GPS, chegada estimada, Metro Linha Amarela) |
 | `manifest.json`, `sw.js`, `icon-*.png`, `apple-touch-icon.png` | App instalável e a funcionar sem rede |
 | `worker.js`, `wrangler.json` | Intermediário Cloudflare: API do Metro (chave secreta) + reencaminhamento `?p=cm&u=/v2/…` (Carris Metropolitana) e `?p=ip&u=/negocios-e-servicos/…` (comboios IP) |
+| `.github/workflows/carris.yml` | Processo noturno (GitHub Actions): descarrega o GTFS da Carris (Lisboa) e publica ficheiros por paragem no ramo `dados` (lidos via raw.githubusercontent.com) |
 | `w.json`, `agora.json` | Horários para os Atalhos (resposta pré-calculada por minuto) |
 
 ## O que a app faz
@@ -28,6 +29,7 @@ App geral de transportes: Metro de Lisboa (4 linhas), comboios (CP e Fertagus, v
 - Metro de Lisboa: API oficial EstadoServicoML (api.metrolisboa.pt:8243) — `tempoEspera/Estacao/{id}`, `estadoLinha/todos`, `infoDestinos/todos`, `infoEstacao/todos`. Destinos Linha Amarela: 43 Odivelas, 44 Lumiar, 45 Campo Grande, 46 Campo Pequeno, 48 Rato. Comboios terminados em B = Amarela, C = Verde.
 - Comboios: Infraestruturas de Portugal — `estacao-nome/{nome}` e `partidas-chegadas/{NodeID}/{início}/{fim}/{tipos}` (API não oficial do site; CP e Fertagus, com atrasos e supressões).
 - Carris Metropolitana: api.carrismetropolitana.pt/v2 — `stops`, `lines`, `arrivals/by_stop/{id}`.
+- Carris (Lisboa): GTFS oficial gateway.carris.pt/gateway/gtfs/api/v2.11/GTFS (horários). Tempo real só como posições de veículos (GTFS-RT, portal de programadores da Carris) — ainda não ligado.
 - Waze, Citymapper e Carris (Lisboa): sem API pública utilizável.
 
 ## Limites conhecidos
