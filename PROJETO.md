@@ -16,6 +16,7 @@ App geral de transportes: Metro de Lisboa (4 linhas), comboios (CP e Fertagus, v
 | `manifest.json`, `sw.js`, `icon-*.png`, `apple-touch-icon.png` | App instalável e a funcionar sem rede |
 | `worker.js`, `wrangler.json` | Intermediário Cloudflare: API do Metro (chave secreta) + reencaminhamento `?p=cm&u=/v2/…` (Carris Metropolitana) e `?p=ip&u=/negocios-e-servicos/…` (comboios IP) |
 | `.github/workflows/carris.yml` | Processo noturno (GitHub Actions): descarrega o GTFS da Carris (Lisboa) e publica ficheiros por paragem no ramo `dados` (lidos via raw.githubusercontent.com) |
+| `rdo.json` | Todas as carreiras da Rodoviária do Oeste (128 carreiras, 704 paragens), tiradas do PDF oficial `rdo_schedules_A5.pdf` (em vigor desde 18/07/2025). O calendário escolar está em `ESCOLA` no `index.html`. |
 | `w.json`, `agora.json` | Horários para os Atalhos (resposta pré-calculada por minuto) |
 
 ## O que a app faz

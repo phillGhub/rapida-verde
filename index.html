@@ -468,15 +468,16 @@ async function clStops(r){
 }
 async function clEnrich(b,n=9999){await Promise.all(b.L.slice(0,n).map(r=>r.stops?0:clStops(r).catch(()=>{r.stopsErr=1})));b.enriched=true;return b}
 function clBadge(rid){const l=(CLR||{})[rid]||[rid,"#F9C500","#000"];return `<span class="badge" style="background:${esc(l[1])};color:${esc(l[2])}">${esc(l[0])}</span>`}
-function clRowsHTML(b,max=12,filtro="",aberto=""){
+function clRowsHTML(b,max=12,filtro="",aberto="",R=null,quando="nas próximas 4 horas"){
+  R=R||CLR||{};
   let L=b.L,fora=0;const k=norm(filtro);
   const chega=r=>{if(!k)return null;if(!r.stops)return norm(r.dest).includes(k)?undefined:r.stopsErr?undefined:false;const s=r.stops.find(x=>norm(x.nome)===k);return s?s.ts:false};
   if(k)L=L.filter(r=>{const c=chega(r);if(c===false){fora++;return false}return true});
-  if(!L.length)return `<div class="empty">Sem partidas nas próximas 4 horas${k?" que passem em "+esc(filtro):""}.</div>`;
+  if(!L.length)return `<div class="empty">Sem partidas ${quando}${k?" que passem em "+esc(filtro):""}.</div>`;
   return L.slice(0,max).map(r=>{const d=(r.ts-Date.now())/60000,c=chega(r),open=aberto===r.key;
-    const chH=typeof c==="number"?`<div style="margin-top:3px;font-size:14px;color:var(--g);font-weight:600">→ ${esc(filtro)} às ${hm(new Date(c))} <span class="sub">· ${Math.round((c-r.ts)/60000)} min de viagem · chegas daqui a ${Math.max(0,Math.round((c-Date.now())/60000))} min</span></div>`:"";
+    const chH=typeof c==="number"?`<div style="margin-top:3px;font-size:14px;color:var(--g);font-weight:600">→ ${esc(filtro)} às ${hm(new Date(c))} <span class="sub">· ${Math.round((c-r.ts)/60000)} min de viagem ${(c-Date.now())/60000<=90?`· chegas daqui a ${Math.max(0,Math.round((c-Date.now())/60000))} min`:""}</span></div>`:"";
     const lista=open?(r.stops?`<div style="margin:6px 0 4px 56px;border-left:3px solid var(--line);padding-left:10px">${r.stops.map(s=>`<div class="tap" data-stop="${esc(s.nome)}" style="display:flex;gap:10px;padding:5px 0;font-size:14px;${norm(s.nome)===k?"color:var(--g);font-weight:700":""}"><span style="font-variant-numeric:tabular-nums;min-width:44px">${hm(new Date(s.ts))}</span><span style="flex:1">${esc(s.nome)}</span></div>`).join("")}<div class="sub" style="font-size:11px">Toca numa paragem para a escolheres como destino.</div></div>`:`<div class="sub" style="margin:4px 0 6px 56px">${r.stopsErr?"Não consegui obter as paragens.":"A carregar paragens…"}</div>`):"";
-    return `<div class="row tap" data-train="${esc(r.key)}" style="flex-wrap:wrap">${clBadge(r.line)}<span class="m"><b>${r.circ?"↻ Circular":esc(r.dest)}</b><small>${r.circ&&(CLR||{})[r.line]?.[3]?esc(CLR[r.line][3])+" · ":""}horário</small>${chH}</span>
+    return `<div class="row tap" data-train="${esc(r.key)}" style="flex-wrap:wrap">${(()=>{const l=R[r.line]||[r.line,"#F9C500","#000"];return `<span class="badge" style="background:${esc(l[1])};color:${esc(l[2])}">${esc(l[0])}</span>`})()}<span class="m"><b>${r.circ?"↻ Circular":esc(r.dest)}</b><small>${r.circ&&R[r.line]?.[3]?esc(R[r.line][3])+" · ":""}horário</small>${chH}</span>
       <span class="in">${d<1?"a sair":d<90?Math.round(d)+" min":""}<small>${hm(new Date(r.ts))} ${open?"▴":"▾"}</small></span>${lista?`<div style="flex-basis:100%">${lista}</div>`:""}</div>`}).join("")+(fora?`<div class="sub" style="padding:6px 4px">${fora} ${fora===1?"partida não passa":"partidas não passam"} em ${esc(filtro)}.</div>`:"");
 }
 function clSearch(){
@@ -499,17 +500,73 @@ function rdoList(linha,sent,fds){
     return{dep,arr,stop:!!b,lab}}).sort((x,y)=>x.dep-y.dep||(y.stop-x.stop));
 }
 
+
+// ======================================================================
+// AUTOCARROS · Rodoviária do Oeste — todas as carreiras (rdo.json, tirado do PDF oficial)
+// ======================================================================
+// Calendário escolar (para as carreiras "E" escolares / "FE" férias escolares). Atualizar todos os anos.
+const ESCOLA=[["2026-09-11","2026-12-15"],["2027-01-04","2027-02-07"],["2027-02-11","2027-03-19"],["2027-04-05","2027-06-11"],["2027-09-13","2027-12-17"]];
+const escolar=ds=>ESCOLA.some(([a,b])=>ds>=a&&ds<=b);
+function rdAtivo(code,D){
+  const ds=iso(D),[p,dd]=code.split("-"),wd=D.getDay(),mo=D.getMonth(),fer=FERIADOS.has(ds),esc=escolar(ds);
+  const inicioAulas=(ESCOLA.find(([a])=>a.startsWith(D.getFullYear()+"-09"))||[D.getFullYear()+"-09-15"])[0];
+  const okP=p==="A"||(p==="E"&&esc)||(p==="FE"&&!esc)||(p==="JA"&&(mo===6||mo===7))||(p==="VIE"&&mo>=6&&mo<=8&&ds<inicioAulas);
+  if(!okP)return false;
+  if(dd==="U")return wd>=1&&wd<=5&&!fer;
+  if(dd==="S")return wd===6&&!fer;
+  if(dd==="DF")return wd===0||fer;
+  if(/^[1-7]+$/.test(dd))return !fer&&dd.includes(String(wd===0?1:wd+1));
+  return false;
+}
+let RD=null;
+async function loadRD(){
+  if(RD)return RD;
+  const j=await getJSON("rdo.json",20000);
+  const occ={};j.linhas.forEach((L,li)=>L.b.forEach((b,bi)=>b.s.forEach((si,row)=>{(occ[si]=occ[si]||[]).push([li,bi,row])})));
+  const idx={};j.paragens.forEach((n,i)=>idx[n]=i);
+  DSRD.R={};j.linhas.forEach(L=>DSRD.R[L.n]=[L.n,"#8cc63f","#10200a",L.nome]);
+  RD={...j,occ,idx};return RD;
+}
+const DSRD={R:{}};
+async function rdBoard(nome){
+  await loadRD();const si=RD.idx[nome];if(si==null)throw new Error("paragem não encontrada");
+  const now=Date.now(),L=[],seen=new Set();
+  [1,0].forEach(back=>{const D=new Date();D.setHours(0,0,0,0);D.setDate(D.getDate()-back);const d0=D.getTime();
+    (RD.occ[si]||[]).forEach(([li,bi,row])=>{const b=RD.linhas[li].b[bi];
+      b.c.forEach((code,ci)=>{if(!rdAtivo(code,D))return;const T=b.t[ci],v=T[row];if(v==null)return;
+        const ts=d0+v*60000;if(ts<now-60e3||ts>now+18*3600e3)return;
+        const stops=[];for(let k=row+1;k<T.length;k++)if(T[k]!=null)stops.push({nome:RD.paragens[b.s[k]],ts:d0+T[k]*60000});
+        if(!stops.length)return;
+        const key=li+":"+bi+":"+ci+":"+row+":"+back;if(seen.has(key))return;seen.add(key);
+        L.push({ts,line:RD.linhas[li].n,dest:stops[stops.length-1].nome,circ:false,stops,key})})})});
+  L.sort((a,b)=>a.ts-b.ts);return{L,t:now,enriched:true};
+}
+// usa o mesmo desenho da Carris, com o número da carreira
+const rdRowsHTML=(b,max,filtro,aberto)=>clRowsHTML(b,max,filtro,aberto,DSRD.R,"até ao fim do dia");
+function rdSearch(){
+  const res=$("#res");if(!res||!RD)return;const raw=(state.qr||"").trim(),v=norm(raw);
+  if(!v){res.innerHTML=`<div class="empty">Escreve o nome da paragem (ex.: Bombarral, Caldas, Peniche) ou o número da carreira (ex.: 365).</div>`;return}
+  let h="";
+  const Ls=/^\d+$/.test(raw)?RD.linhas.filter(L=>L.n.startsWith(raw)).slice(0,6):RD.linhas.filter(L=>norm(L.nome).includes(v)).slice(0,6);
+  if(/^\d+$/.test(raw))h+=Ls.map(L=>{const ps=[];L.b.forEach(b=>b.s.forEach(si=>{const n=RD.paragens[si];if(!ps.includes(n))ps.push(n)}));
+    return `<div class="card"><div class="head"><span class="badge" style="background:#8cc63f;color:#10200a">${esc(L.n)}</span><span class="ttl">${esc(L.nome)}</span></div><div class="sub" style="margin-bottom:4px">Toca na paragem onde vais apanhar o autocarro:</div>${ps.map(n=>`<div class="row tap" data-open='${esc(JSON.stringify({tipo:"rd",id:n,nome:n}))}'><span>🚏</span><span class="m">${esc(n)}</span><span class="sub">›</span></div>`).join("")}</div>`}).join("");
+  else{const P=RD.paragens.map((n,i)=>[n,i]).filter(([n])=>norm(n).includes(v)).slice(0,25);
+    h+=P.length?`<div class="card">${P.map(([n,i])=>{const ls=[...new Set((RD.occ[i]||[]).map(([li])=>RD.linhas[li].n))];
+      return `<div class="row tap" data-open='${esc(JSON.stringify({tipo:"rd",id:n,nome:n}))}'><span>🚏</span><span class="m"><b>${esc(n)}</b><small>${ls.length} ${ls.length===1?"carreira":"carreiras"}: ${esc(ls.slice(0,8).join(", "))}${ls.length>8?"…":""}</small></span><span class="sub">›</span></div>`}).join("")}</div>`:`<div class="empty">Nenhuma paragem com esse nome.</div>`}
+  res.innerHTML=h||`<div class="empty">Nada encontrado.</div>`;
+}
 // ======================================================================
 // Resumos (para Perto e Favoritos)
 // ======================================================================
 const cache={};
 async function board(f){
-  const k=favKey(f),c=cache[k],ttl=f.tipo==="cp"?45e3:f.tipo==="rdo"?6e4:18e3;
+  const k=favKey(f),c=cache[k],ttl=f.tipo==="cp"?45e3:(f.tipo==="rdo"||f.tipo==="rd")?6e4:18e3;
   if(c&&Date.now()-c.t<ttl){if(c.L&&!c.enriched&&(f.filtro||state.board===f)){if(f.tipo==="cp")await cpEnrich(c,f.nome,state.board===f?10:6);if(f.tipo==="cl")await clEnrich(c)}return c}
   let b;
   if(f.tipo==="metro"){if(metroClosed())b={closed:true,t:Date.now()};else b=await metroBoard(f.id)}
   else if(f.tipo==="cp"){b=await cpBoard(f.id,f.nome);if(f.filtro||state.board===f)await cpEnrich(b,f.nome,state.board===f?10:6)}
   else if(f.tipo==="cm")b=await cmBoard(f.id);
+  else if(f.tipo==="rd")b=await rdBoard(f.id);
   else if(f.tipo==="cl"){b=await clBoard(f.id);if(f.filtro||state.board===f)await clEnrich(b)}
   else if(f.tipo==="rdo")b={t:Date.now()};
   cache[k]=b;return b;
@@ -529,9 +586,10 @@ function bodyHTML(f,b,max){
   if(f.tipo==="cp")return cpRowsHTML(b,max,f.filtro||"",f.aberto||"");
   if(f.tipo==="cm")return cmRowsHTML(b,max);
   if(f.tipo==="cl")return clRowsHTML(b,max,f.filtro||"",f.aberto||"");
+  if(f.tipo==="rd")return rdRowsHTML(b,max,f.filtro||"",f.aberto||"");
   return"";
 }
-const ICON={metro:"Ⓜ️",cp:"🚆",cm:"🚌",cl:"🚍",rdo:"🚌"};
+const ICON={metro:"Ⓜ️",cp:"🚆",cm:"🚌",cl:"🚍",rdo:"🚌",rd:"🚌"};
 function cardShell(f,sub){
   const id="c_"+favKey(f).replace(/[^a-zA-Z0-9]/g,"_");
   return `<div class="card" id="${id}"><div class="head row tap" data-open='${esc(JSON.stringify(f))}' style="border:0;padding:0 0 4px"><span style="font-size:20px">${ICON[f.tipo]}</span><span class="ttl">${esc(f.nome)}${sub?`<div class="sub" style="font-weight:500">${sub}</div>`:""}</span><span class="sub">›</span></div><div class="cb">${f.tipo==="rdo"?rdoHTML(f,3):'<div class="empty">A carregar…</div>'}</div></div>`;
@@ -680,8 +738,13 @@ function vAutocarros(){
     h+=`<div class="hint">Horários oficiais (a RDO não tem dados em tempo real) · hoje: ${S.label}</div>`;
     RDO.forEach(L=>{Object.entries(L.sentidos).forEach(([s,v])=>{const f={tipo:"rdo",id:L.id+":"+s,nome:`${L.nome} · ${v.de} → ${v.para}`};h+=cardShell(f,"em vigor desde "+L.vigor)})});
     h+=`<a class="card" href="rapida-verde.html" style="display:block;text-decoration:none;color:var(--txt);border-color:var(--g2)"><b>🟢 Rápida Verde em viagem →</b><div class="sub" style="margin-top:4px">GPS, deteção da paragem e do autocarro, chegada estimada com trânsito e meteorologia, histórico.</div></a>`;
-    h+=`<div class="card sub">Outras linhas da RDO: a empresa não publica horários em formato aberto. Envia os PDFs das linhas que queres e entram aqui com o mesmo formato.</div>`;
-    $("#view").innerHTML=h;
+    const fr=favs.filter(f=>f.tipo==="rd");
+    h+=`<div class="lbl" style="margin:14px 2px 8px">Todas as carreiras da RDO</div><input class="q" id="q" placeholder="Paragem ou n.º da carreira (ex.: Bombarral, 365)" value="${esc(state.qr||"")}" autocomplete="off">`;
+    if(fr.length)h+=fr.map(f=>cardShell(f,f.filtro?"até "+f.filtro:"")).join("");
+    h+=`<div id="res"><div class="empty">A carregar carreiras…</div></div><div class="hint">Horários do PDF oficial da RDO (em vigor desde 18/07/2025). As carreiras escolares seguem o calendário escolar 2026/27.</div>`;
+    $("#view").innerHTML=h;fr.forEach(f=>fillCard(f,4));
+    const q=$("#q");q.oninput=()=>{state.qr=q.value;rdSearch()};
+    loadRD().then(()=>{if(state.tab==="autocarros"&&state.bus==="rdo"&&!state.board)rdSearch()}).catch(e=>{const r=$("#res");if(r)r.innerHTML=`<div class="card sub">⚠️ Não consegui carregar as carreiras (${esc(e.message)}).</div>`});
   }
   $("#bseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.bus=b.dataset.b;ls.set("tp_bus",state.bus);render()};
 }
@@ -699,10 +762,10 @@ function renderBoard(){
   const f=state.board;addRecent(f);
   const fv=favs.find(x=>favKey(x)===favKey(f));if(fv&&fv.filtro&&f.filtro==null)f.filtro=fv.filtro;
   const fav=isFav(f);
-  let sub=f.tipo==="metro"?(EST[f.id]?.linhas||[]).map(l=>`<span style="color:${LINHAS[l].cor}">●</span> ${LINHAS[l].nome}`).join(" "):f.tipo==="cp"?"Partidas · CP e Fertagus":f.tipo==="cm"?"Carris Metropolitana · paragem "+esc(f.id):f.tipo==="cl"?"Carris · paragem "+esc(f.id)+" · horário":f.tipo==="rdo"?"Rodoviária do Oeste · horário":"";
+  let sub=f.tipo==="metro"?(EST[f.id]?.linhas||[]).map(l=>`<span style="color:${LINHAS[l].cor}">●</span> ${LINHAS[l].nome}`).join(" "):f.tipo==="cp"?"Partidas · CP e Fertagus":f.tipo==="cm"?"Carris Metropolitana · paragem "+esc(f.id):f.tipo==="cl"?"Carris · paragem "+esc(f.id)+" · horário":f.tipo==="rd"?"Rodoviária do Oeste · horário de "+esc((RD&&RD.vigor)||"18/07/2025"):f.tipo==="rdo"?"Rodoviária do Oeste · horário":"";
   let h=`<button class="back" id="back">‹ Voltar</button><div class="card"><div class="head"><span style="font-size:22px">${ICON[f.tipo]}</span><span class="ttl">${esc(f.nome)}<div class="sub" style="font-weight:500">${sub}</div></span><button class="star ${fav?"on":""}" id="star" aria-label="Favorito">${fav?"★":"☆"}</button></div>`;
   if(f.tipo==="metro")h+=destSelectHTML(f.id,destDe(f.id));
-  if(f.tipo==="cp"||f.tipo==="cl")h+=`<select id="filt" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:12px;padding:10px;font:15px inherit;margin:6px 0 4px"><option value="">Para onde vais? (a carregar estações…)</option>${f.filtro?`<option selected>${esc(f.filtro)}</option>`:""}</select>`;
+  if(f.tipo==="cp"||f.tipo==="cl"||f.tipo==="rd")h+=`<select id="filt" style="width:100%;background:var(--bg);color:var(--txt);border:1px solid var(--line);border-radius:12px;padding:10px;font:15px inherit;margin:6px 0 4px"><option value="">Para onde vais? (a carregar estações…)</option>${f.filtro?`<option selected>${esc(f.filtro)}</option>`:""}</select>`;
   h+=`<div id="bb"><div class="empty">A carregar…</div></div><div class="sub" id="upd" style="font-size:11px;margin-top:8px"></div></div>`;
   if(f.tipo==="metro")h+=`<div class="card">${(EST[f.id]?.linhas||[]).map(l=>`<button class="btn" data-line="${l}" style="margin-top:6px">🗺️ Linha ${LINHAS[l].nome} ao vivo</button>`).join("")}</div>`;
   if(f.tipo==="rdo"&&f.id.startsWith("rv:"))h+=`<a class="card" href="rapida-verde.html" style="display:block;text-decoration:none;color:var(--g)">Abrir a Rápida Verde em modo viagem (GPS e chegada estimada) →</a>`;
@@ -710,19 +773,20 @@ function renderBoard(){
   $("#back").onclick=()=>{state.board=null;render()};
   $("#star").onclick=()=>{toggleFav(f);const on=isFav(f);$("#star").classList.toggle("on",on);$("#star").textContent=on?"★":"☆"};
   const setFiltro=v=>{f.filtro=v;const i=favs.findIndex(x=>favKey(x)===favKey(f));if(i>=0){favs[i].filtro=f.filtro;ls.set("tp_favs",favs)}const o=ls.get("tp_cpdest",{})||{};if(v)o[favKey(f)]=v;else delete o[favKey(f)];ls.set("tp_cpdest",o);fillSel(cache[favKey(f)]);paint(cache[favKey(f)])};
-  if((f.tipo==="cp"||f.tipo==="cl")&&f.filtro==null)f.filtro=(ls.get("tp_cpdest",{})||{})[favKey(f)]||"";
+  if((f.tipo==="cp"||f.tipo==="cl"||f.tipo==="rd")&&f.filtro==null)f.filtro=(ls.get("tp_cpdest",{})||{})[favKey(f)]||"";
   const filt=$("#filt");if(filt)filt.onchange=()=>setFiltro(filt.value);
   const fillSel=b=>{const el=$("#filt");if(!el||!b||!b.L)return;const D=destinosCP(b);if(f.filtro&&!D.some(x=>norm(x)===norm(f.filtro)))D.unshift(f.filtro);
     el.innerHTML=`<option value="">Para onde vais? (todas as partidas)</option>`+D.map(x=>`<option ${norm(x)===norm(f.filtro||"")?"selected":""}>${esc(x)}</option>`).join("")};
-  if(f.tipo==="cp"||f.tipo==="cl")$("#bb").onclick=e=>{const st=e.target.closest("[data-stop]");if(st){e.stopPropagation();setFiltro(st.dataset.stop);return}
+  if(f.tipo==="cp"||f.tipo==="cl"||f.tipo==="rd")$("#bb").onclick=e=>{const st=e.target.closest("[data-stop]");if(st){e.stopPropagation();setFiltro(st.dataset.stop);return}
     const t=e.target.closest("[data-train]");if(!t)return;f.aberto=f.aberto===t.dataset.train?"":t.dataset.train;const b=cache[favKey(f)];paint(b);
+    if(f.tipo==="rd")return;
     if(f.tipo==="cl"){const r=b&&b.L.find(x=>x.key===f.aberto);if(r&&!r.stops&&!r.stopsErr)clStops(r).then(()=>paint(b)).catch(()=>{r.stopsErr=1;paint(b)});return}
     const r=b&&b.L.find(x=>x.num===f.aberto);if(r&&!r.stops&&!r.stopsErr)cpTrain(r.num).then(T=>{const i=T.stops.findIndex(x=>norm(x.nome)===norm(f.nome));r.stops=i>=0?T.stops.slice(i+1):T.stops;paint(b)}).catch(()=>{r.stopsErr=1;paint(b)})};
   document.querySelectorAll("[data-line]").forEach(b=>b.onclick=()=>{state.board=null;state.tab="metro";state.mLinha=b.dataset.line;state.lineOpen=true;ls.set("tp_tab","metro");render()});
   const ds=$("#dest");if(ds)ds.onchange=()=>{setDest(f.id,ds.value);paint(cache[favKey(f)])};
-  const paint=b=>{if(f.tipo==="cp"||f.tipo==="cl")fillSel(b);$("#bb").innerHTML=bodyHTML(f,b,f.tipo==="cp"?20:f.tipo==="cm"||f.tipo==="cl"?15:f.tipo==="rdo"?40:6);$("#upd").textContent=b&&b.t?"Atualizado às "+new Date(b.t).toLocaleTimeString("pt-PT"):""};
+  const paint=b=>{if(f.tipo==="cp"||f.tipo==="cl"||f.tipo==="rd")fillSel(b);$("#bb").innerHTML=bodyHTML(f,b,f.tipo==="cp"?20:f.tipo==="cm"||f.tipo==="cl"?15:f.tipo==="rd"?25:f.tipo==="rdo"?40:6);$("#upd").textContent=b&&b.t?"Atualizado às "+new Date(b.t).toLocaleTimeString("pt-PT"):""};
   const load=async(force)=>{if(force)delete cache[favKey(f)];let b;try{b=await board(f)}catch(e){b={err:e.message+(f.tipo==="cl"?" — corre o processo “Dados Carris” no GitHub (Actions)":f.tipo!=="metro"?" — confirma que o Worker está atualizado":"")}}if(state.board===f)paint(b)};
-  load();timer=setInterval(()=>{if(!document.hidden)load(true)},f.tipo==="cp"?45e3:f.tipo==="cl"?60e3:20e3);
+  load();timer=setInterval(()=>{if(!document.hidden)load(true)},f.tipo==="cp"?45e3:(f.tipo==="cl"||f.tipo==="rd")?60e3:20e3);
 }
 
 // ---- Ajustes
