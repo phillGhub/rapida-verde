@@ -97,7 +97,8 @@ const FERIADOS=new Set(["2026-01-01","2026-04-03","2026-04-05","2026-04-25","202
 // Linhas da Rodoviária do Oeste (sem dados abertos: horários dos PDFs oficiais).
 // Para acrescentar uma linha: um objeto novo neste array, com os horários por sentido (u = dias úteis, f = fins de semana e feriados).
 const RDO=[
-  {id:"rv",nome:"Rápida Verde",cor:"#8cc63f",sentidos:{ida:{de:"Bombarral",para:"Lisboa (Campo Grande)"},volta:{de:"Lisboa (Campo Grande)",para:"Bombarral"}},X:RV_X,app:"rapida-verde.html",vigor:"01/10/2025"}
+  // p = posição aproximada da paragem de partida; k = chave da posição gravada no modo viagem (rv_stops)
+  {id:"rv",nome:"Rápida Verde",cor:"#8cc63f",sentidos:{ida:{de:"Bombarral",para:"Lisboa (Campo Grande)",p:[39.2675,-9.1555],k:"b"},volta:{de:"Lisboa (Campo Grande)",para:"Bombarral",p:[38.7598,-9.1578],k:"c"}},X:RV_X,app:"rapida-verde.html",vigor:"01/10/2025"}
 ];
 
 // ======================================================================
@@ -564,6 +565,10 @@ function vPerto(){
   let near=[];
   if(gps.pos){
     const ms=Object.values(EST).filter(e=>e.lat).map(e=>({e,d:hav(gps.pos,[e.lat,e.lon])})).sort((a,b)=>a.d-b.d).filter(x=>x.d<1.5).slice(0,2);
+    // Rodoviária do Oeste: paragens gravadas no modo viagem (ou posição aproximada)
+    const gravadas=ls.get("rv_stops",{})||{};
+    RDO.forEach(L=>Object.entries(L.sentidos).forEach(([sn,v])=>{const g=gravadas[v.k],p=(g&&Array.isArray(g.p)&&g.p.length===2)?g.p:v.p;if(!p)return;
+      const d=hav(gps.pos,p);if(d>0.6)return;const f={tipo:"rdo",id:L.id+":"+sn,nome:`${L.nome} · ${v.de} → ${v.para}`};if(!isFav(f))near.push([f,"Rodoviária do Oeste · "+dist(d)])}));
     ms.forEach(x=>{const f={tipo:"metro",id:x.e.id,nome:x.e.nome};if(!isFav(f))near.push([f,"Metro · "+dist(x.d)])});
     if(CM){CM.map(s=>({s,d:hav(gps.pos,[s[2],s[3]])})).sort((a,b)=>a.d-b.d).filter(x=>x.d<0.6).slice(0,3)
       .forEach(x=>{const f={tipo:"cm",id:x.s[0],nome:x.s[1]};if(!isFav(f))near.push([f,"Carris Metropolitana · "+dist(x.d)])})}
@@ -572,7 +577,7 @@ function vPerto(){
   }
   h+=`<div class="lbl" style="margin:14px 2px 8px">📍 À tua volta</div>`;
   if(!gps.pos)h+=`<div class="card sub">Sem a tua localização, não consigo mostrar o que está perto. Os favoritos funcionam na mesma.</div>`;
-  else if(!near.length)h+=`<div class="card sub">Não há estações de metro nem paragens da Carris ou da Carris Metropolitana a menos de 500 m${CM&&CLS?"":" (a carregar paragens…)"}. Procura nos separadores em baixo.</div>`;
+  else if(!near.length)h+=`<div class="card sub">Não há estações de metro nem paragens da Carris, Carris Metropolitana ou Rápida Verde a menos de 500 m${CM&&CLS?"":" (a carregar paragens…)"}. Procura nos separadores em baixo.</div>`;
   h+=near.map(([f,s])=>cardShell(f,s)).join("");
   if(!fl.length)h+=`<div class="card sub">Dica: abre uma estação ou paragem e toca na ⭐ para a teres sempre aqui.</div>`;
   $("#view").innerHTML=h;
