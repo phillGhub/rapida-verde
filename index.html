@@ -557,6 +557,29 @@ function render(){
 }
 
 // ---- Perto
+// ---- Estações de comboio perto (posições do OpenStreetMap, horários da IP)
+const NEARCP={pos:null,t:0,L:[],busy:false};
+async function procurarComboiosPerto(){
+  if(!gps.pos||NEARCP.busy)return false;
+  if(NEARCP.pos&&hav(NEARCP.pos,gps.pos)<0.3&&Date.now()-NEARCP.t<15*60e3)return false;
+  NEARCP.busy=true;
+  try{
+    const[la,lo]=gps.pos;
+    const q=`[out:json][timeout:15];(node(around:1500,${la},${lo})[railway~"^(station|halt)$"];);out body;`;
+    const j=await getJSON("https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q),20000);
+    const els=(j.elements||[]).filter(e=>e.tags&&e.tags.name&&e.tags.station!=="subway"&&e.tags.subway!=="yes"&&e.tags.station!=="light_rail"&&!/metro/i.test(e.tags.network||""));
+    const mapa=ls.get("tp_osm2ip",{})||{};const L=[];
+    for(const e of els.map(e=>({e,d:hav(gps.pos,[e.lat,e.lon])})).sort((a,b)=>a.d-b.d).slice(0,2)){
+      const nm=e.e.tags.name;let m=mapa[nm];
+      if(!m){try{const R=await cpSearch(nm.replace(/^Estação( de| do| da)? /i,""));
+          const k=norm(nm);m=R.find(r=>norm(r.nome)===k)||R.find(r=>norm(r.nome).includes(k)||k.includes(norm(r.nome)))||R[0]||null;
+          if(m){mapa[nm]={id:m.id,nome:m.nome};ls.set("tp_osm2ip",mapa)}}catch(err){}}
+      if(m)L.push({f:{tipo:"cp",id:m.id,nome:m.nome},d:e.d});
+    }
+    NEARCP.L=L;NEARCP.pos=gps.pos.slice();NEARCP.t=Date.now();return true;
+  }catch(e){return false}finally{NEARCP.busy=false}
+}
+
 function vPerto(){
   let h=`<h2>Perto de ti</h2><div id="gpsPill" class="card tap" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer"></div>
   <div id="gpsHelp" class="card sub" style="display:none;line-height:1.6;color:var(--txt)"><b>Para dar a localização à app:</b><br>1. Definições → Privacidade e segurança → Serviços de localização → ligados.<br>2. Na mesma página: <b>Sites do Safari</b> → <b>Durante a utilização</b>, com “Localização exata” ligada.<br>3. Se usas a app pelo ecrã principal, fecha-a e abre de novo; no Safari, toca em <b>aA</b> → Definições do site → Localização → <b>Permitir</b>.</div>`;
@@ -565,6 +588,7 @@ function vPerto(){
   let near=[];
   if(gps.pos){
     const ms=Object.values(EST).filter(e=>e.lat).map(e=>({e,d:hav(gps.pos,[e.lat,e.lon])})).sort((a,b)=>a.d-b.d).filter(x=>x.d<1.5).slice(0,2);
+    NEARCP.L.forEach(x=>{if(!isFav(x.f)&&!near.some(n=>favKey(n[0])===favKey(x.f)))near.push([x.f,"Comboios · "+dist(x.d)])});
     // Rodoviária do Oeste: paragens gravadas no modo viagem (ou posição aproximada)
     const gravadas=ls.get("rv_stops",{})||{};
     RDO.forEach(L=>Object.entries(L.sentidos).forEach(([sn,v])=>{const g=gravadas[v.k],p=(g&&Array.isArray(g.p)&&g.p.length===2)?g.p:v.p;if(!p)return;
@@ -577,16 +601,17 @@ function vPerto(){
   }
   h+=`<div class="lbl" style="margin:14px 2px 8px">📍 À tua volta</div>`;
   if(!gps.pos)h+=`<div class="card sub">Sem a tua localização, não consigo mostrar o que está perto. Os favoritos funcionam na mesma.</div>`;
-  else if(!near.length)h+=`<div class="card sub">Não há estações de metro nem paragens da Carris, Carris Metropolitana ou Rápida Verde a menos de 500 m${CM&&CLS?"":" (a carregar paragens…)"}. Procura nos separadores em baixo.</div>`;
+  else if(!near.length)h+=`<div class="card sub">Não há estações de metro ou comboio nem paragens da Carris, Carris Metropolitana ou Rápida Verde aqui perto${CM&&CLS?"":" (a carregar paragens…)"}. Procura nos separadores em baixo.</div>`;
   h+=near.map(([f,s])=>cardShell(f,s)).join("");
   if(!fl.length)h+=`<div class="card sub">Dica: abre uma estação ou paragem e toca na ⭐ para a teres sempre aqui.</div>`;
   $("#view").innerHTML=h;
   const all=[...fl,...near.map(x=>x[0])];
   const go=()=>all.forEach(f=>fillCard(f,f.tipo==="cp"?4:3));
   paintGps();$("#gpsPill").onclick=()=>{const blq=gps.code===1;startGPS();if(blq){const hp=$("#gpsHelp");hp.style.display=hp.style.display==="none"?"":"none"}};
-  let tk=0;go();timer=setInterval(()=>{if(document.hidden)return;paintGps();if(++tk%4===0){$("#clock").textContent=hm(new Date());go()}},5e3);
+  let tk=0;go();timer=setInterval(()=>{if(document.hidden)return;paintGps();if(++tk%4===0){$("#clock").textContent=hm(new Date());go();procurarComboiosPerto().then(m=>{if(m&&state.tab==="perto"&&!state.board)render()})}},5e3);
   if(!CLS&&gps.pos)loadCL().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
   if(!CM&&gps.pos)loadCM().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
+  procurarComboiosPerto().then(mudou=>{if(mudou&&state.tab==="perto"&&!state.board)render()});
 }
 
 // ---- Metro
@@ -723,7 +748,7 @@ function vDef(){
 document.addEventListener("click",e=>{const o=e.target.closest("[data-open]");if(!o)return;try{state.board=JSON.parse(o.dataset.open);render()}catch(err){}});
 $("#tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.t;state.board=null;ls.set("tp_tab",state.tab);render();window.scrollTo(0,0)};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()});
-$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
+$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Localização das estações de comboio: © colaboradores do OpenStreetMap.<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
 startGPS();
 loadMetroStations().then(()=>{if(!state.board&&(state.tab==="metro"||state.tab==="perto"))render()});
 render();
