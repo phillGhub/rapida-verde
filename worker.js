@@ -95,7 +95,7 @@ export default {
     const tt = u.searchParams.get("tt");
     if (tt !== null) {
       if (!env.TT_KEY) return new Response(JSON.stringify({ ok: false, erro: "falta a chave TT_KEY no Worker" }), { status: 500, headers });
-      if (!/^\/(routing\/1\/calculateRoute|traffic\/services\/5\/incidentDetails)\//.test(tt) || tt.includes("key=") || tt.includes("..")) {
+      if (!/^\/(routing\/1\/calculateRoute\/|traffic\/services\/5\/incidentDetails\?)/.test(tt) || tt.includes("key=") || tt.includes("..")) {
         return new Response(JSON.stringify({ ok: false, erro: "pedido não permitido" }), { status: 400, headers });
       }
       try {
