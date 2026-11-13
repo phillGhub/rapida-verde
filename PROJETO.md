@@ -36,3 +36,9 @@ App geral de transportes: Metro de Lisboa (4 linhas), comboios (CP e Fertagus, v
 ## Limites conhecidos
 - App web no iPhone: sem GPS com o ecrã bloqueado, sem notificações automáticas. Para isso: app nativa (conta Apple Developer 99 €/ano, compilação via GitHub Actions + TestFlight, sem Mac).
 - O utilizador não tem Mac e trabalha sobretudo no iPhone.
+
+## Segurança (revisão de 13/11/2026)
+- Segredos só na Cloudflare: `ML_BASIC` (Metro) e `TT_KEY` (TomTom). Nada no repositório nem no histórico.
+- Worker: só aceita pedidos com origem/referer `https://phillghub.github.io`; limite de 90 pedidos/min por IP (o mapa da linha conta a dobrar); só reencaminha para Carris Metropolitana `/v2/…`, IP `/negocios-e-servicos/…` e TomTom (routing e incidentes); nunca devolve a chave do TomTom; não guarda erros em cache.
+- App: todo o texto vindo de APIs é escapado; `Content-Security-Policy` limita os sites contactados; ao OpenStreetMap só vai a posição arredondada (~100 m).
+- Limites conhecidos: a origem pode ser falsificada por quem quiser abusar (o limite por minuto é por instância do Worker); o domínio phillghub.github.io é partilhado por todos os sites GitHub Pages da conta.

@@ -2,6 +2,7 @@
 <html lang="pt-PT">
 <head>
 <meta charset="utf-8">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.workers.dev https://api.carrismetropolitana.pt https://raw.githubusercontent.com https://api.tomtom.com https://overpass-api.de; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -623,7 +624,8 @@ async function procurarComboiosPerto(){
   if(NEARCP.pos&&hav(NEARCP.pos,gps.pos)<0.3&&Date.now()-NEARCP.t<15*60e3)return false;
   NEARCP.busy=true;
   try{
-    const[la,lo]=gps.pos;
+    // privacidade: ao mapa só vai a posição arredondada (~100 m)
+    const la=Math.round(gps.pos[0]*1000)/1000,lo=Math.round(gps.pos[1]*1000)/1000;
     const q=`[out:json][timeout:15];(node(around:1500,${la},${lo})[railway~"^(station|halt)$"];);out body;`;
     const j=await getJSON("https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q),20000);
     const els=(j.elements||[]).filter(e=>e.tags&&e.tags.name&&e.tags.station!=="subway"&&e.tags.subway!=="yes"&&e.tags.station!=="light_rail"&&!/metro/i.test(e.tags.network||""));

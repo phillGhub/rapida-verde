@@ -23,7 +23,8 @@ const API = "https://api.metrolisboa.pt:8243";
 let tok = null, tokExp = 0;
 const LIMITE = 90;                 // pedidos por minuto por IP (a app usa ~15; o mapa ao vivo ~10)
 const CONTA = { min: 0, ip: new Map() };
-const CACHE_EST = new Map();       // respostas recentes por estação (poupa a chave do Metro)
+const CACHE_EST = new Map();
+const CACHE_VAR = new Map();       // tempos recentes por estação, para o mapa da linha       // respostas recentes por estação (poupa a chave do Metro)
 let est8 = null, est8t = 0;
 
 async function estadoLinhas(env) {
@@ -65,7 +66,9 @@ export default {
       "Access-Control-Allow-Methods": "GET, OPTIONS",
       "Vary": "Origin",
       "Cache-Control": "no-store",
-      "Content-Type": "application/json; charset=utf-8"
+      "Content-Type": "application/json; charset=utf-8",
+      "X-Content-Type-Options": "nosniff",
+      "Referrer-Policy": "no-referrer"
     };
     if (req.method === "OPTIONS") return new Response(null, { headers });
 
@@ -78,7 +81,10 @@ export default {
     const ip = req.headers.get("CF-Connecting-IP") || "?";
     const min = Math.floor(Date.now() / 60000);
     if (CONTA.min !== min) { CONTA.min = min; CONTA.ip = new Map(); }
-    const n = (CONTA.ip.get(ip) || 0) + 1;
+    // pedidos que geram muitas chamadas ao Metro contam mais (o mapa da linha pede até 20 estações)
+    const nv = (new URL(req.url).searchParams.get("varias") || "").split(",").filter(Boolean).length;
+    const peso = nv ? Math.max(1, Math.ceil(nv / 4)) : 1;
+    const n = (CONTA.ip.get(ip) || 0) + peso;
     CONTA.ip.set(ip, n);
     if (n > LIMITE) {
       return new Response(JSON.stringify({ ok: false, erro: "demasiados pedidos — espera um minuto" }), { status: 429, headers: { ...headers, "Retry-After": "60" } });
@@ -93,9 +99,15 @@ export default {
         return new Response(JSON.stringify({ ok: false, erro: "pedido não permitido" }), { status: 400, headers });
       }
       try {
+        if (/[#\s]/.test(tt)) return new Response(JSON.stringify({ ok: false, erro: "pedido não permitido" }), { status: 400, headers });
         const r = await fetch("https://api.tomtom.com" + tt + (tt.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(env.TT_KEY), {
-          cf: { cacheTtl: 120, cacheEverything: true }   // 2 min: várias pessoas a ver o mesmo percurso gastam 1 só pedido
+          cf: { cacheTtlByStatus: { "200-299": 120, "300-599": 0 }, cacheEverything: true }   // 2 min: várias pessoas a ver o mesmo percurso gastam 1 só pedido
         });
+        if (!r.ok) {
+          // nas respostas de erro, garante que a chave nunca aparece
+          const t = (await r.text()).split(env.TT_KEY).join("***");
+          return new Response(t, { status: r.status, headers });
+        }
         return new Response(r.body, { status: r.status, headers: { ...headers, "Cache-Control": "max-age=60" } });
       } catch (e) {
         return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
@@ -120,13 +132,16 @@ export default {
       }
     }
     if (u.searchParams.get("lista") === "estacoes") {
+      if (globalThis.__lista && Date.now() - globalThis.__lista.t < 3600000) return new Response(globalThis.__lista.body, { headers: { ...headers, "Cache-Control": "max-age=86400" } });
       try {
         let r = await fetch(`${API}/estadoServicoML/1.0.1/infoEstacao/todos`, { headers: { Authorization: "Bearer " + await token(env) } });
         if (r.status === 401) r = await fetch(`${API}/estadoServicoML/1.0.1/infoEstacao/todos`, { headers: { Authorization: "Bearer " + await token(env, true) } });
         const j = await r.json();
         const L = Array.isArray(j.resposta) ? j.resposta : [];
         const est = L.map(x => ({ id: x.stop_id, nome: x.stop_name, lat: Number(x.stop_lat), lon: Number(x.stop_lon), linhas: String(x.linha || "") }));
-        return new Response(JSON.stringify({ ok: true, estacoes: est }), { headers: { ...headers, "Cache-Control": "max-age=86400" } });
+        const body = JSON.stringify({ ok: true, estacoes: est });
+        if (est.length) globalThis.__lista = { t: Date.now(), body };
+        return new Response(body, { headers: { ...headers, "Cache-Control": "max-age=86400" } });
       } catch (e) {
         return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
       }
@@ -140,16 +155,21 @@ export default {
       try {
         const t1 = await token(env);
         const res = await Promise.all(ids.map(async id => {
+          const c = CACHE_VAR.get(id);
+          if (c && Date.now() - c.t < 8000) return c.v;
           try {
             const r = await fetch(`${API}/estadoServicoML/1.0.1/tempoEspera/Estacao/${id}`, { headers: { Authorization: "Bearer " + t1 } });
             const j = await r.json();
             if (!Array.isArray(j.resposta)) return { id, cais: [] };
-            return { id, cais: j.resposta.map(x => ({
+            const v = { id, cais: j.resposta.map(x => ({
               linha: LINHA[String(x.comboio || "").slice(-1)] || "?",
               destino: DEST[x.destino] || String(x.destino),
               comboios: [[x.comboio, x.tempoChegada1], [x.comboio2, x.tempoChegada2], [x.comboio3, x.tempoChegada3]]
                 .filter(p => p[0] && !isNaN(Number(p[1]))).map(p => ({ id: String(p[0]), s: Number(p[1]) }))
             })) };
+            CACHE_VAR.set(id, { t: Date.now(), v });
+            if (CACHE_VAR.size > 80) CACHE_VAR.clear();
+            return v;
           } catch (e) { return { id, cais: [], erro: String(e.message || e) }; }
         }));
         const body = JSON.stringify({ ok: true, atualizado: new Date().toISOString(), estacoes: res, estado: await estadoLinhas(env) });
