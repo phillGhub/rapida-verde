@@ -22,7 +22,7 @@ h1{font-size:15px;font-weight:600;color:var(--mut);margin:4px 2px 12px;display:f
 h1 b{color:var(--g)}
 h2{font-size:22px;margin:4px 2px 10px}
 .tabs{position:fixed;left:0;right:0;bottom:0;z-index:10;display:flex;justify-content:center;background:rgba(15,21,18,.94);backdrop-filter:blur(10px);border-top:1px solid var(--line);padding:6px 6px calc(6px + env(safe-area-inset-bottom))}
-.tabs button{flex:1;max-width:130px;border:0;background:transparent;color:var(--mut);font:600 11px/1.2 inherit;padding:6px 2px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px}
+.tabs button{flex:1;max-width:130px;border:0;background:transparent;color:var(--mut);font:600 10px/1.2 inherit;padding:6px 1px;cursor:pointer;display:flex;flex-direction:column;align-items:center;gap:3px;letter-spacing:-.01em;min-width:0}
 .tabs button span{font-size:21px;line-height:1}
 .tabs button.on{color:var(--g)}
 .seg{display:flex;background:var(--card);border:1px solid var(--line);border-radius:14px;padding:4px;gap:4px;margin-bottom:12px;overflow-x:auto}
@@ -77,6 +77,7 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
   <button data-t="metro"><span>Ⓜ️</span>Metro</button>
   <button data-t="comboios"><span>🚆</span>Comboios</button>
   <button data-t="autocarros"><span>🚌</span>Autocarros</button>
+  <button data-t="transito"><span>🚗</span>Trânsito</button>
   <button data-t="def"><span>⚙️</span>Ajustes</button>
 </nav>
 <script>
@@ -611,7 +612,7 @@ function render(){
   document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t===state.tab));
   $("#clock").textContent=hm(new Date());
   if(state.board)return renderBoard();
-  ({perto:vPerto,metro:vMetro,comboios:vComboios,autocarros:vAutocarros,def:vDef})[state.tab]();
+  ({perto:vPerto,metro:vMetro,comboios:vComboios,autocarros:vAutocarros,transito:vTransito,def:vDef})[state.tab]();
 }
 
 // ---- Perto
@@ -757,6 +758,96 @@ function cmSearch(){
   res.innerHTML=(v.length<3?`<div class="lbl" style="margin:4px 2px 8px">Paragens mais próximas</div>`:"")+(L.length?`<div class="card">${L.map(([s,d])=>`<div class="row tap" data-open='${esc(JSON.stringify({tipo:"cm",id:s[0],nome:s[1]}))}'><span>🚏</span><span class="m"><b>${esc(s[1])}</b><small>${esc(s[5]||"")} · paragem ${esc(s[0])}${s[4]?" · linhas "+esc(s[4].split(",").slice(0,6).join(", ")):""}</small></span><span class="sub">${d!=null?dist(d):""} ›</span></div>`).join("")}</div>`:`<div class="empty">Nenhuma paragem encontrada.</div>`);
 }
 
+
+// ======================================================================
+// TRÂNSITO (TomTom: tempos em direto por percurso + ocorrências)
+// ======================================================================
+const ttKey=()=>{try{return localStorage.getItem("rv_tt")||""}catch(e){return""}};
+// v = ponto intermédio para obrigar a passar na ponte. a/b: [nome, lat, lon]
+const PONTES=[
+  {n:"Ponte 25 de Abril",a:["Alcântara",38.7120,-9.1760],b:["Almada (Pragal)",38.6640,-9.1620],v:[38.6897,-9.1774]},
+  {n:"Ponte Vasco da Gama",a:["Sacavém",38.7800,-9.1000],b:["Montijo",38.7120,-8.9840],v:[38.7570,-9.0400]}
+];
+const ACESSOS=[ // a = fora de Lisboa, b = Lisboa
+  {n:"A8 · Loures",a:["Loures",38.8320,-9.1690],b:["Campo Grande",38.7600,-9.1560]},
+  {n:"A1 · Vila Franca de Xira",a:["Vila Franca de Xira",38.9530,-8.9900],b:["Olivais",38.7820,-9.1090]},
+  {n:"A5 · Cascais",a:["Cascais",38.7120,-9.4010],b:["Amoreiras",38.7230,-9.1610]},
+  {n:"IC19 · Sintra",a:["Rio de Mouro",38.7640,-9.3260],b:["Sete Rios",38.7420,-9.1680]},
+  {n:"A2 + Ponte 25 de Abril · Seixal",a:["Fogueteiro",38.6020,-9.1050],b:["Alcântara",38.7120,-9.1760]},
+  {n:"2.ª Circular",a:["Benfica",38.7510,-9.2010],b:["Aeroporto",38.7690,-9.1290]},
+  {n:"Eixo Norte-Sul",a:["Lumiar",38.7710,-9.1640],b:["Alcântara",38.7110,-9.1740]},
+  {n:"CRIL",a:["Algés",38.7040,-9.2280],b:["Sacavém",38.7860,-9.1030]}
+];
+const TT={t:0,rotas:[],inc:[],err:null,busy:false,sentido:null};
+const sentidoAuto=()=>new Date().getHours()<14?"entrar":"sair";
+async function ttRota(from,to,via){
+  const k=ttKey(),pts=[from,via,to].filter(Boolean).map(p=>p[0]+","+p[1]).join(":");
+  const j=await getJSON(`https://api.tomtom.com/routing/1/calculateRoute/${pts}/json?key=${encodeURIComponent(k)}&traffic=true&computeTravelTimeFor=all&routeType=fastest`,15000);
+  const sm=j.routes&&j.routes[0]&&j.routes[0].summary;if(!sm)throw new Error("sem percurso");
+  const t=sm.travelTimeInSeconds,nt=sm.noTrafficTravelTimeInSeconds||sm.historicTrafficTravelTimeInSeconds||t-(sm.trafficDelayInSeconds||0);
+  return{t,nt,km:sm.lengthInMeters/1000,atraso:sm.trafficDelayInSeconds||Math.max(0,t-nt)};
+}
+const ICAT={1:"Acidente",2:"Nevoeiro",3:"Condições perigosas",4:"Chuva",5:"Gelo",6:"Fila",7:"Via fechada",8:"Estrada cortada",9:"Obras",10:"Vento forte",11:"Inundação",14:"Veículo avariado"};
+const ICON_I={1:"💥",2:"🌫️",3:"⚠️",4:"🌧️",5:"🧊",6:"🚗",7:"🚧",8:"⛔",9:"🚧",10:"💨",11:"🌊",14:"🛻"};
+async function ttIncidentes(){
+  const k=ttKey(),bbox="-9.50,38.55,-8.85,38.97";
+  const fields="{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description,code},startTime,endTime,from,to,length,delay,roadNumbers}}}";
+  const j=await getJSON(`https://api.tomtom.com/traffic/services/5/incidentDetails?key=${encodeURIComponent(k)}&bbox=${bbox}&fields=${encodeURIComponent(fields)}&language=pt-PT&timeValidityFilter=present`,15000);
+  return(j.incidents||[]).map(i=>i.properties||{}).filter(p=>(p.magnitudeOfDelay||0)>=1||[1,7,8,14].includes(p.iconCategory))
+    .sort((a,b)=>(b.magnitudeOfDelay||0)-(a.magnitudeOfDelay||0)||(b.delay||0)-(a.delay||0)).slice(0,30);
+}
+async function ttAtualizar(force){
+  if(!ttKey()||TT.busy)return;
+  const sent=TT.sentido||sentidoAuto();
+  if(!force&&Date.now()-TT.t<120e3&&TT.sentFeito===sent)return;
+  TT.busy=true;TT.err=null;paintTT();
+  try{
+    const jobs=[];
+    PONTES.forEach(p=>{jobs.push({g:"pontes",n:p.n,de:p.a[0],para:p.b[0],f:()=>ttRota(p.a.slice(1),p.b.slice(1),p.v)});jobs.push({g:"pontes",n:p.n,de:p.b[0],para:p.a[0],f:()=>ttRota(p.b.slice(1),p.a.slice(1),p.v)})});
+    ACESSOS.forEach(x=>{const[o,d]=sent==="entrar"?[x.a,x.b]:[x.b,x.a];jobs.push({g:"acessos",n:x.n,de:o[0],para:d[0],f:()=>ttRota(o.slice(1),d.slice(1))})});
+    const res=await Promise.all(jobs.map(async j=>{try{return{...j,r:await j.f()}}catch(e){return{...j,e:e.message}}}));
+    let inc=[];try{inc=await ttIncidentes()}catch(e){TT.err="ocorrências: "+e.message}
+    if(res.every(x=>x.e))throw new Error(res[0].e);
+    TT.rotas=res;TT.inc=inc;TT.t=Date.now();TT.sentFeito=sent;
+  }catch(e){TT.err=e.message}
+  TT.busy=false;paintTT();
+}
+function nivel(r){const x=(r.t-r.nt)/Math.max(60,r.nt);return x<0.15?["Fluido","var(--g)"]:x<0.4?["Lento","var(--warn)"]:["Muito lento","var(--red)"]}
+function rotaHTML(x){
+  if(x.e)return `<div class="row"><span class="m"><b>${esc(x.de)} → ${esc(x.para)}</b><small>sem dados (${esc(x.e)})</small></span></div>`;
+  const[lab,cor]=nivel(x.r),extra=Math.round((x.r.t-x.r.nt)/60);
+  return `<div class="row"><span style="width:10px;height:10px;border-radius:50%;background:${cor};flex:none"></span><span class="m"><b>${esc(x.de)} → ${esc(x.para)}</b><small><span style="color:${cor}">${lab}</span>${extra>=1?` · +${extra} min que o normal`:""} · ${x.r.km.toFixed(1)} km</small></span><span class="in" style="color:${cor}">${Math.round(x.r.t/60)} min<small>normal ${Math.round(x.r.nt/60)} min</small></span></div>`;
+}
+function paintTT(){
+  const el=document.getElementById("ttBody");if(!el)return;
+  if(!ttKey()){el.innerHTML="";return}
+  const sent=TT.sentido||sentidoAuto();
+  let h=`<div class="seg" id="ttSeg"><button data-s="entrar" class="${sent==="entrar"?"on":""}">Para Lisboa</button><button data-s="sair" class="${sent==="sair"?"on":""}">Para fora de Lisboa</button></div>`;
+  if(TT.err)h+=`<div class="warn">⚠️ ${esc(TT.err)}</div>`;
+  if(!TT.t&&TT.busy)h+=`<div class="empty">A consultar o trânsito…</div>`;
+  if(TT.t){
+    const g=n=>TT.rotas.filter(x=>x.g===n);
+    // pontes agrupadas por ponte
+    h+=`<div class="card"><div class="lbl">🌉 Pontes</div>${PONTES.map(p=>`<div class="grp"><div class="gh">${esc(p.n)}</div>${g("pontes").filter(x=>x.n===p.n).map(rotaHTML).join("")}</div>`).join("")}</div>`;
+    h+=`<div class="card"><div class="lbl">🛣️ Acessos ${sent==="entrar"?"a Lisboa":"para fora de Lisboa"}</div>${g("acessos").map(x=>`<div class="grp" style="margin-top:6px"><div class="gh" style="font-size:13px">${esc(x.n)}</div>${rotaHTML(x)}</div>`).join("")}</div>`;
+    h+=`<div class="card"><div class="lbl">⚠️ Ocorrências em Lisboa e arredores</div>${TT.inc.length?TT.inc.map(p=>{const d=Math.round((p.delay||0)/60),ev=(p.events&&p.events[0]&&p.events[0].description)||ICAT[p.iconCategory]||"Ocorrência";
+      return `<div class="row"><span style="font-size:20px">${ICON_I[p.iconCategory]||"⚠️"}</span><span class="m"><b>${esc(ev)}</b>${(p.roadNumbers||[]).length?` <span class="badge" style="background:var(--line);color:var(--txt);min-width:0;font-size:11px">${esc(p.roadNumbers.join(", "))}</span>`:""}<small>${p.from?esc(p.from)+(p.to&&p.to!==p.from?" → "+esc(p.to):""):""}${p.length?" · "+(p.length/1000).toFixed(1)+" km":""}</small></span><span class="in" style="color:${(p.magnitudeOfDelay||0)>=3?"var(--red)":(p.magnitudeOfDelay||0)>=2?"var(--warn)":"var(--mut)"}">${d>=1?"+"+d+" min":""}</span></div>`}).join(""):`<div class="empty">Sem ocorrências importantes neste momento. 👍</div>`}</div>`;
+    h+=`<div class="sub" style="font-size:11px;margin:0 2px 8px">${TT.busy?"A atualizar…":"Atualizado às "+hm(new Date(TT.t))} · atualiza sozinho a cada 5 min · tempos por percursos típicos; o “normal” é o tempo sem trânsito.</div><button class="btn" id="ttNow">↻ Atualizar agora</button>`;
+  }
+  el.innerHTML=h;
+  const sg=$("#ttSeg");if(sg)sg.onclick=e=>{const b=e.target.closest("button");if(!b)return;TT.sentido=b.dataset.s;ttAtualizar(true)};
+  const nb=$("#ttNow");if(nb)nb.onclick=()=>ttAtualizar(true);
+}
+function vTransito(){
+  let h=`<h2>Trânsito</h2><div class="hint">Lisboa e arredores · pontes, acessos e ocorrências em direto (TomTom)</div>`;
+  if(!ttKey())h+=`<div class="card"><b>Falta a chave do TomTom</b><div class="sub" style="margin:6px 0 10px;line-height:1.5">É grátis (até 2 500 consultas por dia, chega bem para uso pessoal). Cria conta em <a class="link" href="https://developer.tomtom.com/" target="_blank" rel="noopener">developer.tomtom.com</a>, copia a “API key” e cola aqui. Fica guardada só neste telemóvel — é a mesma que a Rápida Verde usa.</div><div style="display:flex;gap:8px"><input class="q" id="ttIn" placeholder="Chave do TomTom" style="margin:0;flex:1" autocomplete="off"><button class="btn" id="ttSave" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div></div>`;
+  h+=`<div id="ttBody"></div>`;
+  $("#view").innerHTML=h;
+  const sv=$("#ttSave");if(sv)sv.onclick=()=>{const v=$("#ttIn").value.trim();if(!v)return;try{localStorage.setItem("rv_tt",v)}catch(e){}render()};
+  paintTT();ttAtualizar(false);
+  timer=setInterval(()=>{if(!document.hidden){$("#clock").textContent=hm(new Date());ttAtualizar(true)}},5*60e3);
+}
+
 // ---- Quadro de uma estação/paragem
 function renderBoard(){
   const f=state.board;addRecent(f);
@@ -795,7 +886,7 @@ function vDef(){
   <div class="card"><div class="lbl">Intermediário (Worker da Cloudflare)</div><div class="sub" style="margin:6px 0 8px">Necessário para o Metro e os comboios. Atual: <b>${esc(W())}</b></div>
   <div style="display:flex;gap:8px"><input class="q" id="wIn" placeholder="https://….workers.dev" style="margin:0;flex:1"><button class="btn" id="wSave" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div><div class="sub" id="wTest" style="margin-top:8px"></div><button class="btn" id="wTry">Testar ligações</button></div>
   <div class="card"><div class="lbl">Dados guardados</div><div class="sub" style="margin:6px 0">${favs.length} favoritos · listas de estações e paragens em cache</div><button class="btn" id="clr">Atualizar listas de estações e paragens</button></div>
-  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Sobre</b><br>App não oficial e sem fins comerciais. Não tem qualquer ligação ao Metro de Lisboa, CP, Fertagus, Infraestruturas de Portugal, Carris, Carris Metropolitana/TML ou Rodoviária do Oeste. A tua localização e os teus favoritos ficam só neste telemóvel.<br><br><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Carris (Lisboa): horários do GTFS oficial, atualizados todas as noites no GitHub.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
+  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Sobre</b><br>App não oficial e sem fins comerciais. Não tem qualquer ligação ao Metro de Lisboa, CP, Fertagus, Infraestruturas de Portugal, Carris, Carris Metropolitana/TML ou Rodoviária do Oeste. A tua localização e os teus favoritos ficam só neste telemóvel.<br><br><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Trânsito: TomTom (com a tua chave gratuita).<br>Carris (Lisboa): horários do GTFS oficial, atualizados todas as noites no GitHub.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
   $("#wSave").onclick=()=>{let v=$("#wIn").value.trim();if(v&&!/^https?:\/\//.test(v))v="https://"+v;try{v?localStorage.setItem("rv_metro",v):localStorage.removeItem("rv_metro")}catch(e){}render()};
   $("#clr").onclick=()=>{["tp_cm","tp_cml","rv_estacoes","tp_cl"].forEach(k=>ls.set(k,null));CM=null;CML=null;CLS=null;$("#clr").textContent="✓ Vão ser descarregadas de novo";loadMetroStations();};
   $("#wTry").onclick=async()=>{const o=$("#wTest");o.innerHTML="A testar…";const r=[];
@@ -812,7 +903,7 @@ function vDef(){
 document.addEventListener("click",e=>{const o=e.target.closest("[data-open]");if(!o)return;try{state.board=JSON.parse(o.dataset.open);render()}catch(err){}});
 $("#tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.t;state.board=null;ls.set("tp_tab",state.tab);render();window.scrollTo(0,0)};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()});
-$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Localização das estações de comboio: © colaboradores do OpenStreetMap.<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
+$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Localização das estações de comboio: © colaboradores do OpenStreetMap · Trânsito: © TomTom.<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
 startGPS();
 loadMetroStations().then(()=>{if(!state.board&&(state.tab==="metro"||state.tab==="perto"))render()});
 render();
