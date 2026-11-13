@@ -780,9 +780,20 @@ const ACESSOS=[ // a = fora de Lisboa, b = Lisboa
 ];
 const TT={t:0,rotas:[],inc:[],err:null,busy:false,sentido:null};
 const sentidoAuto=()=>new Date().getHours()<14?"entrar":"sair";
+// O TomTom grátis aceita poucos pedidos por segundo: um de cada vez, com pausa, e nova tentativa se der 429
+const pausa=ms=>new Promise(r=>setTimeout(r,ms));
+let ttUltimo=0;
+async function ttGet(url){
+  for(let tent=0;tent<4;tent++){
+    const espera=ttUltimo+350-Date.now();if(espera>0)await pausa(espera);
+    ttUltimo=Date.now();
+    try{return await getJSON(url,15000)}
+    catch(e){if(/429/.test(e.message)&&tent<3){await pausa(1200*(tent+1));continue}throw e}
+  }
+}
 async function ttRota(from,to,via){
   const k=ttKey(),pts=[from,via,to].filter(Boolean).map(p=>p[0]+","+p[1]).join(":");
-  const j=await getJSON(`https://api.tomtom.com/routing/1/calculateRoute/${pts}/json?key=${encodeURIComponent(k)}&traffic=true&computeTravelTimeFor=all&routeType=fastest`,15000);
+  const j=await ttGet(`https://api.tomtom.com/routing/1/calculateRoute/${pts}/json?key=${encodeURIComponent(k)}&traffic=true&computeTravelTimeFor=all&routeType=fastest`);
   const sm=j.routes&&j.routes[0]&&j.routes[0].summary;if(!sm)throw new Error("sem percurso");
   const t=sm.travelTimeInSeconds,nt=sm.noTrafficTravelTimeInSeconds||sm.historicTrafficTravelTimeInSeconds||t-(sm.trafficDelayInSeconds||0);
   return{t,nt,km:sm.lengthInMeters/1000,atraso:sm.trafficDelayInSeconds||Math.max(0,t-nt)};
@@ -792,7 +803,7 @@ const ICON_I={1:"💥",2:"🌫️",3:"⚠️",4:"🌧️",5:"🧊",6:"🚗",7:"�
 async function ttIncidentes(){
   const k=ttKey(),bbox="-9.50,38.55,-8.85,38.97";
   const fields="{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description,code},startTime,endTime,from,to,length,delay,roadNumbers}}}";
-  const j=await getJSON(`https://api.tomtom.com/traffic/services/5/incidentDetails?key=${encodeURIComponent(k)}&bbox=${bbox}&fields=${encodeURIComponent(fields)}&language=pt-PT&timeValidityFilter=present`,15000);
+  const j=await ttGet(`https://api.tomtom.com/traffic/services/5/incidentDetails?key=${encodeURIComponent(k)}&bbox=${bbox}&fields=${encodeURIComponent(fields)}&language=pt-PT&timeValidityFilter=present`);
   return(j.incidents||[]).map(i=>i.properties||{}).filter(p=>(p.magnitudeOfDelay||0)>=1||[1,7,8,14].includes(p.iconCategory))
     .sort((a,b)=>(b.magnitudeOfDelay||0)-(a.magnitudeOfDelay||0)||(b.delay||0)-(a.delay||0)).slice(0,30);
 }
@@ -805,8 +816,13 @@ async function ttAtualizar(force){
     const jobs=[];
     PONTES.forEach(p=>{jobs.push({g:"pontes",n:p.n,de:p.a[0],para:p.b[0],f:()=>ttRota(p.a.slice(1),p.b.slice(1),p.v)});jobs.push({g:"pontes",n:p.n,de:p.b[0],para:p.a[0],f:()=>ttRota(p.b.slice(1),p.a.slice(1),p.v)})});
     ACESSOS.forEach(x=>{const[o,d]=sent==="entrar"?[x.a,x.b]:[x.b,x.a];jobs.push({g:"acessos",n:x.n,de:o[0],para:d[0],f:()=>ttRota(o.slice(1),d.slice(1))})});
-    const res=await Promise.all(jobs.map(async j=>{try{return{...j,r:await j.f()}}catch(e){return{...j,e:e.message}}}));
     let inc=[];try{inc=await ttIncidentes()}catch(e){TT.err="ocorrências: "+e.message}
+    const res=[];
+    for(const j of jobs){try{res.push({...j,r:await j.f()})}catch(e){res.push({...j,e:e.message})}
+      // mostra à medida que chegam (o resto fica com os valores anteriores)
+      const ant=TT.rotas.filter(x=>!res.some(y=>y.g===x.g&&y.de===x.de&&y.para===x.para));
+      TT.rotas=[...res,...ant.filter(x=>jobs.some(y=>y.g===x.g&&y.de===x.de&&y.para===x.para))].sort((a,b)=>jobs.findIndex(y=>y.de===a.de&&y.para===a.para&&y.g===a.g)-jobs.findIndex(y=>y.de===b.de&&y.para===b.para&&y.g===b.g));
+      TT.inc=inc;if(!TT.t)TT.t=Date.now();paintTT();}
     if(res.every(x=>x.e))throw new Error(res[0].e);
     TT.rotas=res;TT.inc=inc;TT.t=Date.now();TT.sentFeito=sent;
   }catch(e){TT.err=e.message}
