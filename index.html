@@ -783,6 +783,8 @@ const sentidoAuto=()=>new Date().getHours()<14?"entrar":"sair";
 // O TomTom grátis aceita poucos pedidos por segundo: um de cada vez, com pausa, e nova tentativa se der 429
 const pausa=ms=>new Promise(r=>setTimeout(r,ms));
 let ttUltimo=0;
+// Com chave própria no telemóvel vai direto ao TomTom; sem ela, vai pelo Worker (que tem a chave guardada)
+const ttURL=caminho=>ttKey()?`https://api.tomtom.com${caminho}${caminho.includes("?")?"&":"?"}key=${encodeURIComponent(ttKey())}`:`${W()}/?tt=${encodeURIComponent(caminho)}`;
 async function ttGet(url){
   for(let tent=0;tent<4;tent++){
     const espera=ttUltimo+350-Date.now();if(espera>0)await pausa(espera);
@@ -792,8 +794,8 @@ async function ttGet(url){
   }
 }
 async function ttRota(from,to,via){
-  const k=ttKey(),pts=[from,via,to].filter(Boolean).map(p=>p[0]+","+p[1]).join(":");
-  const j=await ttGet(`https://api.tomtom.com/routing/1/calculateRoute/${pts}/json?key=${encodeURIComponent(k)}&traffic=true&computeTravelTimeFor=all&routeType=fastest`);
+  const pts=[from,via,to].filter(Boolean).map(p=>p[0]+","+p[1]).join(":");
+  const j=await ttGet(ttURL(`/routing/1/calculateRoute/${pts}/json?traffic=true&computeTravelTimeFor=all&routeType=fastest`));
   const sm=j.routes&&j.routes[0]&&j.routes[0].summary;if(!sm)throw new Error("sem percurso");
   const t=sm.travelTimeInSeconds,nt=sm.noTrafficTravelTimeInSeconds||sm.historicTrafficTravelTimeInSeconds||t-(sm.trafficDelayInSeconds||0);
   return{t,nt,km:sm.lengthInMeters/1000,atraso:sm.trafficDelayInSeconds||Math.max(0,t-nt)};
@@ -801,14 +803,14 @@ async function ttRota(from,to,via){
 const ICAT={1:"Acidente",2:"Nevoeiro",3:"Condições perigosas",4:"Chuva",5:"Gelo",6:"Fila",7:"Via fechada",8:"Estrada cortada",9:"Obras",10:"Vento forte",11:"Inundação",14:"Veículo avariado"};
 const ICON_I={1:"💥",2:"🌫️",3:"⚠️",4:"🌧️",5:"🧊",6:"🚗",7:"🚧",8:"⛔",9:"🚧",10:"💨",11:"🌊",14:"🛻"};
 async function ttIncidentes(){
-  const k=ttKey(),bbox="-9.50,38.55,-8.85,38.97";
+  const bbox="-9.50,38.55,-8.85,38.97";
   const fields="{incidents{type,geometry{type,coordinates},properties{iconCategory,magnitudeOfDelay,events{description,code},startTime,endTime,from,to,length,delay,roadNumbers}}}";
-  const j=await ttGet(`https://api.tomtom.com/traffic/services/5/incidentDetails?key=${encodeURIComponent(k)}&bbox=${bbox}&fields=${encodeURIComponent(fields)}&language=pt-PT&timeValidityFilter=present`);
+  const j=await ttGet(ttURL(`/traffic/services/5/incidentDetails?bbox=${bbox}&fields=${encodeURIComponent(fields)}&language=pt-PT&timeValidityFilter=present`));
   return(j.incidents||[]).map(i=>i.properties||{}).filter(p=>p.iconCategory===1||p.iconCategory===14)
     .sort((a,b)=>(b.magnitudeOfDelay||0)-(a.magnitudeOfDelay||0)||(b.delay||0)-(a.delay||0)).slice(0,30);
 }
 async function ttAtualizar(force){
-  if(!ttKey()||TT.busy)return;
+  if(TT.busy)return;
   const sent=TT.sentido||sentidoAuto();
   if(!force&&Date.now()-TT.t<120e3&&TT.sentFeito===sent)return;
   TT.busy=true;TT.err=null;paintTT();
@@ -836,7 +838,6 @@ function rotaHTML(x){
 }
 function paintTT(){
   const el=document.getElementById("ttBody");if(!el)return;
-  if(!ttKey()){el.innerHTML="";return}
   const sent=TT.sentido||sentidoAuto();
   let h=`<div class="seg" id="ttSeg"><button data-s="entrar" class="${sent==="entrar"?"on":""}">Para Lisboa</button><button data-s="sair" class="${sent==="sair"?"on":""}">Para fora de Lisboa</button></div>`;
   if(TT.err)h+=`<div class="warn">⚠️ ${esc(TT.err)}</div>`;
@@ -862,10 +863,8 @@ function paintTT(){
 }
 function vTransito(){
   let h=`<h2>Trânsito</h2><div class="hint">Lisboa e arredores · pontes, acessos e acidentes em direto (TomTom)</div>`;
-  if(!ttKey())h+=`<div class="card"><b>Falta a chave do TomTom</b><div class="sub" style="margin:6px 0 10px;line-height:1.5">É grátis (até 2 500 consultas por dia, chega bem para uso pessoal). Cria conta em <a class="link" href="https://developer.tomtom.com/" target="_blank" rel="noopener">developer.tomtom.com</a>, copia a “API key” e cola aqui. Fica guardada só neste telemóvel — é a mesma que a Rápida Verde usa.</div><div style="display:flex;gap:8px"><input class="q" id="ttIn" placeholder="Chave do TomTom" style="margin:0;flex:1" autocomplete="off"><button class="btn" id="ttSave" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div></div>`;
   h+=`<div id="ttBody"></div>`;
   $("#view").innerHTML=h;
-  const sv=$("#ttSave");if(sv)sv.onclick=()=>{const v=$("#ttIn").value.trim();if(!v)return;try{localStorage.setItem("rv_tt",v)}catch(e){}render()};
   paintTT();ttAtualizar(false);
   timer=setInterval(()=>{if(!document.hidden){$("#clock").textContent=hm(new Date());ttAtualizar(true)}},5*60e3);
 }
@@ -908,7 +907,7 @@ function vDef(){
   <div class="card"><div class="lbl">Intermediário (Worker da Cloudflare)</div><div class="sub" style="margin:6px 0 8px">Necessário para o Metro e os comboios. Atual: <b>${esc(W())}</b></div>
   <div style="display:flex;gap:8px"><input class="q" id="wIn" placeholder="https://….workers.dev" style="margin:0;flex:1"><button class="btn" id="wSave" style="width:auto;margin:0;padding:10px 14px">Guardar</button></div><div class="sub" id="wTest" style="margin-top:8px"></div><button class="btn" id="wTry">Testar ligações</button></div>
   <div class="card"><div class="lbl">Dados guardados</div><div class="sub" style="margin:6px 0">${favs.length} favoritos · listas de estações e paragens em cache</div><button class="btn" id="clr">Atualizar listas de estações e paragens</button></div>
-  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Sobre</b><br>App não oficial e sem fins comerciais. Não tem qualquer ligação ao Metro de Lisboa, CP, Fertagus, Infraestruturas de Portugal, Carris, Carris Metropolitana/TML ou Rodoviária do Oeste. A tua localização e os teus favoritos ficam só neste telemóvel.<br><br><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Trânsito: TomTom (com a tua chave gratuita).<br>Carris (Lisboa): horários do GTFS oficial, atualizados todas as noites no GitHub.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
+  <div class="card sub" style="line-height:1.6"><b style="color:var(--txt)">Sobre</b><br>App não oficial e sem fins comerciais. Não tem qualquer ligação ao Metro de Lisboa, CP, Fertagus, Infraestruturas de Portugal, Carris, Carris Metropolitana/TML ou Rodoviária do Oeste. A tua localização e os teus favoritos ficam só neste telemóvel.<br><br><b style="color:var(--txt)">Fontes</b><br>Metro: API oficial do Metro de Lisboa (todas as linhas).<br>Comboios: Infraestruturas de Portugal (partidas e atrasos de CP e Fertagus).<br>Carris Metropolitana: API pública oficial, com tempo real.<br>Trânsito: TomTom (pela chave guardada no Worker).<br>Carris (Lisboa): horários do GTFS oficial, atualizados todas as noites no GitHub.<br>Rodoviária do Oeste: horários dos PDFs oficiais.</div>`;
   $("#wSave").onclick=()=>{let v=$("#wIn").value.trim();if(v&&!/^https?:\/\//.test(v))v="https://"+v;try{v?localStorage.setItem("rv_metro",v):localStorage.removeItem("rv_metro")}catch(e){}render()};
   $("#clr").onclick=()=>{["tp_cm","tp_cml","rv_estacoes","tp_cl"].forEach(k=>ls.set(k,null));CM=null;CML=null;CLS=null;$("#clr").textContent="✓ Vão ser descarregadas de novo";loadMetroStations();};
   $("#wTry").onclick=async()=>{const o=$("#wTest");o.innerHTML="A testar…";const r=[];

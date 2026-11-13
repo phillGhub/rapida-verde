@@ -85,6 +85,22 @@ export default {
     }
 
     const u = new URL(req.url);
+    // Trânsito (TomTom) com a chave guardada no Worker (secret TT_KEY): ?tt=<caminho e parâmetros sem a chave>
+    const tt = u.searchParams.get("tt");
+    if (tt !== null) {
+      if (!env.TT_KEY) return new Response(JSON.stringify({ ok: false, erro: "falta a chave TT_KEY no Worker" }), { status: 500, headers });
+      if (!/^\/(routing\/1\/calculateRoute|traffic\/services\/5\/incidentDetails)\//.test(tt) || tt.includes("key=") || tt.includes("..")) {
+        return new Response(JSON.stringify({ ok: false, erro: "pedido não permitido" }), { status: 400, headers });
+      }
+      try {
+        const r = await fetch("https://api.tomtom.com" + tt + (tt.includes("?") ? "&" : "?") + "key=" + encodeURIComponent(env.TT_KEY), {
+          cf: { cacheTtl: 120, cacheEverything: true }   // 2 min: várias pessoas a ver o mesmo percurso gastam 1 só pedido
+        });
+        return new Response(r.body, { status: r.status, headers: { ...headers, "Cache-Control": "max-age=60" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
+      }
+    }
     const p = u.searchParams.get("p");
     if (p && PROXY[p]) {
       const path = u.searchParams.get("u") || "";
