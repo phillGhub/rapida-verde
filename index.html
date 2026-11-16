@@ -322,10 +322,20 @@ function stopLine(){clearInterval(lineTimer);lineTimer=null}
 // COMBOIOS (Infraestruturas de Portugal: CP e Fertagus)
 // ======================================================================
 function lisboa(d){const o={};new Intl.DateTimeFormat("en-CA",{timeZone:"Europe/Lisbon",year:"numeric",month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",hourCycle:"h23"}).formatToParts(d).forEach(p=>o[p.type]=p.value);return `${o.year}-${o.month}-${o.day} ${o.hour}:${o.minute}`}
+// Estações já conhecidas (de pesquisas anteriores): permitem mostrar resultados instantâneos
+const cpConhecidas=()=>ls.get("tp_cpest",{})||{};
+function cpLocal(q){const k=norm(q);if(k.length<2)return[];const o=cpConhecidas();
+  [...favs,...(ls.get("tp_rec",[])||[])].filter(f=>f.tipo==="cp").forEach(f=>o[f.id]=f.nome);
+  return Object.entries(o).map(([id,nome])=>({id,nome})).filter(x=>norm(x.nome).includes(k)).sort((a,b)=>norm(a.nome).indexOf(k)-norm(b.nome).indexOf(k)||a.nome.localeCompare(b.nome,"pt")).slice(0,12)}
+const cpMem={};
 async function cpSearch(q){
+  const key=norm(q);if(cpMem[key])return cpMem[key];
   const j=await ext("ip","/negocios-e-servicos/estacao-nome/"+q.trim());
-  const L=Array.isArray(j)?j:(j.response||j.Response||[]);
-  return L.map(x=>({id:String(x.NodeID??x.nodeId??x.id),nome:x.Nome??x.nome??x.Designation})).filter(x=>x.id&&x.nome);
+  const arr=Array.isArray(j)?j:(j.response||j.Response||[]);
+  const L=arr.map(x=>({id:String(x.NodeID??x.nodeId??x.id),nome:x.Nome??x.nome??x.Designation})).filter(x=>x.id&&x.nome);
+  cpMem[key]=L;
+  if(L.length){const o=cpConhecidas();L.forEach(x=>o[x.id]=x.nome);const ks=Object.keys(o);if(ks.length<1500)ls.set("tp_cpest",o)}
+  return L;
 }
 const SERV={"ALFA":"Alfa Pendular","IC":"Intercidades","IR":"Inter-Regional","REGIONAL":"Regional","URB|SUBUR":"Urbano","URBANO":"Urbano","INTERNACIONAL":"Internacional","ESPECIAL":"Especial"};
 function collect(o,out,ctx){
@@ -563,16 +573,27 @@ function rdSearch(){
 const cache={};
 async function board(f){
   const k=favKey(f),c=cache[k],ttl=f.tipo==="cp"?45e3:(f.tipo==="rdo"||f.tipo==="rd")?6e4:18e3;
-  if(c&&Date.now()-c.t<ttl){if(c.L&&!c.enriched&&(f.filtro||state.board===f)){if(f.tipo==="cp")await cpEnrich(c,f.nome,state.board===f?10:6);if(f.tipo==="cl")await clEnrich(c)}return c}
+  const enriquecer=async b=>{if(!b||!b.L||b.enriched)return;
+    if(f.tipo==="cp"){if(f.filtro)await cpEnrich(b,f.nome,state.board===f?10:6);else if(state.board===f)cpEnrich(b,f.nome,10).then(()=>window.__repaint&&window.__repaint(b))}
+    if(f.tipo==="cl"){if(f.filtro)await clEnrich(b);else if(state.board===f)clEnrich(b).then(()=>window.__repaint&&window.__repaint(b))}};
+  if(c&&Date.now()-c.t<ttl){if(f.filtro||state.board===f)await enriquecer(c);return c}
   let b;
   if(f.tipo==="metro"){if(metroClosed())b={closed:true,t:Date.now()};else b=await metroBoard(f.id)}
-  else if(f.tipo==="cp"){b=await cpBoard(f.id,f.nome);if(f.filtro||state.board===f)await cpEnrich(b,f.nome,state.board===f?10:6)}
+  else if(f.tipo==="cp"){b=await cpBoard(f.id,f.nome);if(f.filtro||state.board===f)await enriquecer(b)}
   else if(f.tipo==="cm")b=await cmBoard(f.id);
   else if(f.tipo==="rd")b=await rdBoard(f.id);
-  else if(f.tipo==="cl"){b=await clBoard(f.id);if(f.filtro||state.board===f)await clEnrich(b)}
+  else if(f.tipo==="cl"){b=await clBoard(f.id);if(f.filtro||state.board===f)await enriquecer(b)}
   else if(f.tipo==="rdo")b={t:Date.now()};
-  cache[k]=b;return b;
+  cache[k]=b;guardarQuadro(k,b);return b;
 }
+// Último quadro de cada estação guardado no telemóvel: ao abrir, aparece logo (e atualiza por cima)
+function guardarQuadro(k,b){if(!b||b.err||b.closed||!/^(metro|cp):/.test(k))return;
+  try{const o=ls.get("tp_bc",{})||{};o[k]={...b,L:b.L?b.L.map(r=>{const{stops,...x}=r;return x}):undefined};
+    const ks=Object.keys(o);if(ks.length>25)ks.sort((a,b)=>o[a].t-o[b].t).slice(0,ks.length-25).forEach(x=>delete o[x]);ls.set("tp_bc",o)}catch(e){}}
+function quadroGuardado(f){const o=ls.get("tp_bc",{})||{},b=o[favKey(f)];if(!b||Date.now()-b.t>15*60e3)return null;
+  if(f.tipo==="metro"){const el=(Date.now()-b.t)/60000;   // os minutos do metro são relativos: desconta o tempo que passou
+    return{...b,velho:true,grupos:(b.grupos||[]).map(g=>({...g,m:g.m.map(x=>x-el).filter(x=>x>=0),tr:(g.tr||[]).map(t=>({...t,m:t.m-el})).filter(t=>t.m>=0)})).filter(g=>g.m.length)}}
+  return{...b,velho:true}}
 function rdoHTML(f,max){
   const[lid,sent]=f.id.split(":");const L=RDO.find(x=>x.id===lid);if(!L)return"";const S=svcDay();
   const up=rdoList(L,sent,S.fds).filter(t=>t.dep>=S.m-1).slice(0,max);
@@ -716,11 +737,16 @@ function vPerto(){
 function vMetro(){
   const l=state.mLinha,L=LINHAS[l];
   let h=`<h2>Metro de Lisboa</h2><div class="seg" id="mseg">${ORDEM_L.map(x=>`<button data-l="${x}" class="${x===l?"on":""}" style="${x===l?`background:${LINHAS[x].cor};color:${x==="amarela"?"#1a1500":"#fff"}`:""}">${LINHAS[x].nome}</button>`).join("")}</div>`;
+  h+=`<input class="q" id="mq" placeholder="Procurar estação (ex.: Saldanha, Oriente)" value="${esc(state.mq||"")}" autocomplete="off"><div id="mres"></div>`;
   h+=`<div id="mstate">${estadoHTML()}</div>`;
   h+=`<div class="card"><div class="lbl">Estações da Linha ${L.nome}</div>${L.est.map(([id,nome])=>{const o=(EST[id]?.linhas||[]).filter(x=>x!==l);const g=gps.pos&&EST[id]?.lat?hav(gps.pos,[EST[id].lat,EST[id].lon]):null;
     return `<div class="row tap" data-open='${esc(JSON.stringify({tipo:"metro",id,nome}))}'><span class="dot" style="background:${L.cor};width:14px;height:14px"></span><span class="m"><b>${esc(nome)}</b>${o.length?`<small>ligação: ${o.map(x=>`<span style="color:${LINHAS[x].cor}">●</span> ${LINHAS[x].nome}`).join(" ")}</small>`:""}</span><span class="sub">${g!=null&&g<3?dist(g):""} ›</span></div>`}).join("")}</div>`;
   h+=`<div class="card"><button class="btn" id="lineTog" style="margin:0">🗺️ Ver a Linha ${L.nome} ao vivo</button><div id="lineBox" style="display:none;margin-top:10px"><svg id="lineMap"></svg><div class="sub" id="lineInfo" style="font-size:11px;margin-top:4px">A carregar…</div></div></div>`;
   $("#view").innerHTML=h;
+  const mq=$("#mq"),mpinta=()=>{const k=norm(state.mq||""),el=$("#mres");if(!el)return;if(k.length<2){el.innerHTML="";return}
+    const L=Object.values(EST).filter(e=>norm(e.nome).includes(k)).sort((a,b)=>norm(a.nome).indexOf(k)-norm(b.nome).indexOf(k)||a.nome.localeCompare(b.nome,"pt"));
+    el.innerHTML=L.length?`<div class="card">${L.map(e=>`<div class="row tap" data-open='${esc(JSON.stringify({tipo:"metro",id:e.id,nome:e.nome}))}'><span style="display:flex;gap:3px">${e.linhas.map(l=>`<i style="width:12px;height:12px;border-radius:50%;display:inline-block;background:${LINHAS[l].cor}"></i>`).join("")}</span><span class="m"><b>${esc(e.nome)}</b><small>${e.linhas.map(l=>"Linha "+LINHAS[l].nome).join(" · ")}</small></span><span class="sub">›</span></div>`).join("")}</div>`:`<div class="empty">Nenhuma estação com esse nome.</div>`};
+  mq.oninput=()=>{state.mq=mq.value;mpinta()};mpinta();
   $("#mseg").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.mLinha=b.dataset.l;ls.set("tp_mlinha",state.mLinha);state.lineOpen=false;render()};
   $("#lineTog").onclick=()=>{state.lineOpen=!state.lineOpen;openLine()};
   if(state.lineOpen)openLine(true);
@@ -743,14 +769,20 @@ function vComboios(){
   $("#view").innerHTML=h;
   fv.forEach(f=>fillCard(f,4));
   let t=null;const q=$("#q");
-  q.oninput=()=>{state.q=q.value;clearTimeout(t);if(q.value.trim().length<3){$("#res").innerHTML="";return}t=setTimeout(()=>doSearch(q.value),350)};
+  q.oninput=()=>{state.q=q.value;clearTimeout(t);const v=q.value.trim();if(v.length<2){$("#res").innerHTML="";return}
+    const loc=cpLocal(v);if(loc.length)$("#res").innerHTML=cpLista(loc);   // instantâneo
+    if(v.length>=3)t=setTimeout(()=>doSearch(q.value),200)};
   if(state.q.trim().length>=3)doSearch(state.q);
 }
+function cpLista(L){return `<div class="card">${L.slice(0,12).map(x=>`<div class="row tap" data-open='${esc(JSON.stringify({tipo:"cp",id:x.id,nome:x.nome}))}'><span>🚆</span><span class="m"><b>${esc(x.nome)}</b></span><span class="sub">›</span></div>`).join("")}</div>`}
 async function doSearch(v){
-  const res=$("#res");res.innerHTML=`<div class="empty">A procurar…</div>`;
+  const res=$("#res");
+  // 1) logo: estações já conhecidas; 2) depois: resultado completo da IP
+  const loc=cpLocal(v);
+  res.innerHTML=loc.length?cpLista(loc)+`<div class="sub" style="font-size:11px;margin:-6px 2px 8px">A procurar mais…</div>`:`<div class="empty">A procurar…</div>`;
   try{const L=await cpSearch(v);if(state.q!==v)return;
-    res.innerHTML=L.length?`<div class="card">${L.slice(0,12).map(x=>`<div class="row tap" data-open='${esc(JSON.stringify({tipo:"cp",id:x.id,nome:x.nome}))}'><span>🚆</span><span class="m"><b>${esc(x.nome)}</b></span><span class="sub">›</span></div>`).join("")}</div>`:`<div class="empty">Nenhuma estação com esse nome.</div>`}
-  catch(e){res.innerHTML=`<div class="card sub">⚠️ Não consegui procurar (${esc(e.message)}). Confirma que o Worker foi atualizado (Ajustes).</div>`}
+    res.innerHTML=L.length?cpLista(L):loc.length?cpLista(loc):`<div class="empty">Nenhuma estação com esse nome.</div>`}
+  catch(e){if(state.q!==v)return;res.innerHTML=loc.length?cpLista(loc):`<div class="card sub">⚠️ Não consegui procurar (${esc(e.message)}).</div>`}
 }
 
 // ---- Autocarros
@@ -936,6 +968,8 @@ function renderBoard(){
   document.querySelectorAll("[data-line]").forEach(b=>b.onclick=()=>{state.board=null;state.tab="metro";state.mLinha=b.dataset.line;state.lineOpen=true;ls.set("tp_tab","metro");render()});
   const ds=$("#dest");if(ds)ds.onchange=()=>{setDest(f.id,ds.value);paint(cache[favKey(f)])};
   const paint=b=>{if(f.tipo==="cp"||f.tipo==="cl"||f.tipo==="rd")fillSel(b);$("#bb").innerHTML=bodyHTML(f,b,f.tipo==="cp"?20:f.tipo==="cm"||f.tipo==="cl"?15:f.tipo==="rd"?25:f.tipo==="rdo"?40:6);$("#upd").textContent=b&&b.t?"Atualizado às "+new Date(b.t).toLocaleTimeString("pt-PT"):""};
+  window.__repaint=b=>{if(state.board===f&&cache[favKey(f)]===b)paint(b)};
+  {const c0=cache[favKey(f)]||quadroGuardado(f);if(c0&&!c0.err)paint(c0),$("#upd").textContent="A atualizar…"}
   const load=async(force)=>{if(force)delete cache[favKey(f)];let b;try{b=await board(f)}catch(e){b={err:e.message+(f.tipo==="cl"?" — corre o processo “Dados Carris” no GitHub (Actions)":f.tipo!=="metro"?" — confirma que o Worker está atualizado":"")}}if(state.board===f)paint(b)};
   load();timer=setInterval(()=>{if(!document.hidden)load(true)},f.tipo==="cp"?45e3:(f.tipo==="cl"||f.tipo==="rd")?60e3:20e3);
 }
