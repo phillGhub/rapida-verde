@@ -329,7 +329,7 @@ function render(){
 
   // Estimativa
   const v=speedNow(),avg=avgSpeed();
-  let etaMin=null,sub="",tag=document.getElementById("traffic");
+  let etaMin=null,sub="",tag=document.getElementById("traffic"),nivel=null,faltam=null;
   if(pos&&left>0.3){
     const m=modelMinutes(kmFromB,dir==="ida"?ROAD_KM:0,dir,S.hour,S.fds);
     let t=m.t;
@@ -350,6 +350,7 @@ function render(){
     etaMin=S.mins+t;
     window._why=why;
     const free=modelMinutes(kmFromB,dir==="ida"?ROAD_KM:0,dir,12,true).t+Math.min(1.5,left/40);const ratio=t/Math.max(1,free);
+    nivel=ratio>1.35?"bad":ratio>1.12?"slow":"ok";faltam=Math.round(t);
     tag.textContent=ratio>1.35?"trânsito intenso":ratio>1.12?"algum trânsito":"trânsito normal";tag.className="tag "+(ratio>1.35?"bad":ratio>1.12?"slow":"ok");
     sub=`faltam ~${Math.round(t)} min`+(trip?` · horário: ${fmt(trip.arr)}`+(Math.round(etaMin-trip.arr)>1?` (<b style="color:var(--warn)">+${Math.round(etaMin-trip.arr)} min</b>)`:""):"");
   }else if(pos&&left<=0.3){etaMin=null;sub="Chegaste 🎉";tag.textContent="";tag.className="tag"}
@@ -357,6 +358,12 @@ function render(){
   else{const nx=list.find(t=>t.dep>S.mins);tag.textContent="";tag.className="tag";
     if(nx){etaMin=nx.arr;sub=`se apanhares o das ${fmt(nx.dep)} (sai daqui a ${Math.ceil(nx.dep-S.mins)} min)`}else sub="Sem mais autocarros hoje"}
   document.getElementById("eta").textContent=etaMin!=null?fmt(etaMin):"--:--";
+  // Resumo para o cartão do separador "Perto" (app principal)
+  try{
+    const naViagem=!sim&&!!pos&&pr&&pr.d<2&&left>0.3&&done>0.5&&(!!active||(v!=null&&v>15));
+    save("rv_live",{t:Date.now(),viagem:naViagem,dest,eta:etaMin!=null&&naViagem?fmt(etaMin):null,faltam,km:pos?left:null,feitos:pos?done:null,total:ROAD_KM,
+      vel:v!=null?Math.round(v):null,nivel,motivo:(window._why&&window._why[0])||"",dep:trip?fmt(trip.dep):null,atraso:trip&&etaMin!=null?Math.round(etaMin-trip.arr):null});
+  }catch(e){}
   const wl=(pos&&left>0.3&&window._why)?window._why:[];
   document.getElementById("why").innerHTML=wl.length?"Porquê: "+wl.join(" · "):(wx&&wx.txt&&wx.f>1?"Atenção: "+wx.txt:"");
   document.getElementById("etaSub").innerHTML=sub;
@@ -638,7 +645,8 @@ document.getElementById("mode").addEventListener("click",()=>{
   startGPS();
 });
 startGPS();
-loadWx();setInterval(loadWx,15*60e3);loadStations().then(loadMetro);document.getElementById("mChips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const map={CG:"Campo Grande",EC:"Entre Campos",RA:"Rato"};mManual=b.dataset.s?(AMARELA.find(s=>s.nome===map[b.dataset.s])||{}).id||b.dataset.s:null;metro=null;renderMetro();loadMetro()});setInterval(()=>{if(!document.hidden)loadMetro()},30e3);document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadMetro()});
+const BG=new URLSearchParams(location.search).has("bg");
+loadWx();setInterval(loadWx,15*60e3);if(!BG)loadStations().then(loadMetro);document.getElementById("mChips").addEventListener("click",e=>{const b=e.target.closest("button");if(!b)return;const map={CG:"Campo Grande",EC:"Entre Campos",RA:"Rato"};mManual=b.dataset.s?(AMARELA.find(s=>s.nome===map[b.dataset.s])||{}).id||b.dataset.s:null;metro=null;renderMetro();loadMetro()});setInterval(()=>{if(!document.hidden)loadMetro()},30e3);document.addEventListener("visibilitychange",()=>{if(!document.hidden)loadMetro()});
 setTimeout(loadLive,3000);setInterval(loadLive,2*60e3);
 render();setInterval(()=>{if(!sim)render()},15000);
 if("serviceWorker" in navigator&&location.protocol==="https:"){navigator.serviceWorker.register("sw.js").catch(()=>{})}

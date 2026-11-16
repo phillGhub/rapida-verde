@@ -143,7 +143,7 @@ function startGPS(){
   if(!navigator.geolocation){gps.err="este browser não tem GPS";gps.code=9;paintGps();return}
   if(gps.watch!=null)try{navigator.geolocation.clearWatch(gps.watch)}catch(e){}
   gps.err=null;gps.code=null;paintGps();
-  const ok=p=>{const first=!gps.pos;gps.pos=[p.coords.latitude,p.coords.longitude];gps.acc=p.coords.accuracy;gps.err=null;gps.code=null;gps.t=Date.now();paintGps();if(first&&state.tab==="perto"&&!state.board)render()};
+  const ok=p=>{const first=!gps.pos;if(p.coords.speed!=null&&p.coords.speed>=0)gps.v=p.coords.speed*3.6;gps.pos=[p.coords.latitude,p.coords.longitude];gps.acc=p.coords.accuracy;gps.err=null;gps.code=null;gps.t=Date.now();paintGps();if(first&&state.tab==="perto"&&!state.board)render()};
   const bad=e=>{gps.code=e.code;gps.err=e.code===1?"localização recusada":e.code===2?"sem sinal de GPS":"GPS a demorar";paintGps()};
   try{navigator.geolocation.getCurrentPosition(ok,bad,{maximumAge:60000,timeout:15000});gps.watch=navigator.geolocation.watchPosition(ok,bad,{enableHighAccuracy:true,maximumAge:10000,timeout:30000})}catch(e){gps.err="erro no GPS";gps.code=9;paintGps()}
 }
@@ -641,8 +641,45 @@ async function procurarComboiosPerto(){
   }catch(e){return false}finally{NEARCP.busy=false}
 }
 
+
+// ---- Rápida Verde em viagem: cartão no topo de "Perto"
+// A página rapida-verde.html calcula tudo (percurso, modelo, trânsito, histórico) e deixa um resumo em rv_live.
+// Quando parece que estás em viagem, corre escondida em segundo plano para manter o resumo atualizado.
+function rvPareceViagem(){
+  if(ls.get("rv_trip",null))return true;
+  const L=ls.get("rv_live",null);if(L&&L.viagem&&Date.now()-L.t<10*60e3)return true;
+  if(!gps.pos)return false;
+  const g=ls.get("rv_stops",{})||{},paragens=[(g.b&&g.b.p)||[39.2675,-9.1555],(g.c&&g.c.p)||[38.7598,-9.1578]];
+  if(paragens.some(p=>hav(gps.pos,p)<1))return true;
+  const[la,lo]=gps.pos;return la>38.74&&la<39.3&&lo>-9.27&&lo<-9.07&&(gps.v||0)>25;   // na zona do percurso e a andar depressa
+}
+function rvMotor(){
+  if(!rvPareceViagem()||document.getElementById("rvbg"))return;
+  const f=document.createElement("iframe");f.id="rvbg";f.src="rapida-verde.html?bg=1";f.setAttribute("allow","geolocation");f.setAttribute("aria-hidden","true");f.tabIndex=-1;
+  f.style.cssText="position:absolute;width:1px;height:1px;opacity:0;pointer-events:none;border:0;left:-10px;top:-10px";document.body.appendChild(f);
+}
+function rvCartao(){
+  const el=document.getElementById("rvLive");if(!el)return;
+  const L=ls.get("rv_live",null);
+  if(!L||!L.viagem||Date.now()-L.t>120e3){el.innerHTML="";return}
+  const cor={ok:"var(--g)",slow:"var(--warn)",bad:"var(--red)"}[L.nivel]||"var(--mut)",txt={ok:"Trânsito normal",slow:"Algum trânsito",bad:"Trânsito intenso"}[L.nivel]||"Trânsito: a calcular";
+  const pct=L.total&&L.feitos!=null?Math.max(0,Math.min(100,L.feitos/L.total*100)):0;
+  el.innerHTML=`<a class="card" href="rapida-verde.html" style="display:block;text-decoration:none;color:var(--txt);border:2px solid ${cor}">
+    <div style="display:flex;align-items:center;gap:8px"><span class="lbl" style="flex:1">🚌 Rápida Verde · a caminho de ${esc(L.dest||"")}</span><span class="live"></span></div>
+    <div style="display:flex;align-items:baseline;gap:10px;margin-top:4px"><span style="font-size:40px;font-weight:800;line-height:1">${esc(L.eta||"--:--")}</span><span class="sub" style="font-size:15px">${L.faltam!=null?"faltam ~"+L.faltam+" min":""}</span></div>
+    <div style="height:6px;background:var(--line);border-radius:3px;margin:10px 0"><div style="height:6px;width:${pct}%;background:var(--g);border-radius:3px"></div></div>
+    <div style="display:flex;gap:8px;text-align:center">
+      <div style="flex:1;background:var(--bg);border-radius:10px;padding:8px"><div style="font-size:20px;font-weight:700">${L.km!=null?(L.km<10?L.km.toFixed(1):Math.round(L.km)):"–"}</div><div class="sub" style="font-size:11px">km em falta</div></div>
+      <div style="flex:1;background:var(--bg);border-radius:10px;padding:8px"><div style="font-size:20px;font-weight:700">${L.vel!=null?L.vel:"–"}</div><div class="sub" style="font-size:11px">km/h</div></div>
+      <div style="flex:1.4;background:var(--bg);border-radius:10px;padding:8px;display:flex;flex-direction:column;align-items:center;justify-content:center;gap:4px">
+        <div style="display:flex;gap:4px">${["bad","slow","ok"].map(n=>`<span style="width:14px;height:14px;border-radius:50%;background:${{ok:"var(--g)",slow:"var(--warn)",bad:"var(--red)"}[n]};opacity:${L.nivel===n?1:.18}"></span>`).join("")}</div>
+        <div style="font-size:11px;color:${cor};font-weight:700">${txt}</div></div>
+    </div>
+    ${L.dep?`<div class="sub" style="margin-top:8px">Autocarro das ${esc(L.dep)}${L.atraso!=null&&L.atraso>1?` · <span class="late">+${L.atraso} min</span>`:L.atraso!=null&&L.atraso<-1?` · <span class="ok">${L.atraso} min</span>`:""}${L.motivo?" · "+esc(L.motivo):""}</div>`:L.motivo?`<div class="sub" style="margin-top:8px">${esc(L.motivo)}</div>`:""}
+  </a>`;
+}
 function vPerto(){
-  let h=`<h2>Perto de ti</h2><div id="gpsPill" class="card tap" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer"></div>
+  let h=`<h2>Perto de ti</h2><div id="rvLive"></div><div id="gpsPill" class="card tap" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer"></div>
   <div id="gpsHelp" class="card sub" style="display:none;line-height:1.6;color:var(--txt)"><b>Para dar a localização à app:</b><br>1. Definições → Privacidade e segurança → Serviços de localização → ligados.<br>2. Na mesma página: <b>Sites do Safari</b> → <b>Durante a utilização</b>, com “Localização exata” ligada.<br>3. Se usas a app pelo ecrã principal, fecha-a e abre de novo; no Safari, toca em <b>aA</b> → Definições do site → Localização → <b>Permitir</b>.</div>`;
   const fl=favs.slice();
   if(fl.length)h+=`<div class="lbl" style="margin:4px 2px 8px">⭐ Favoritos</div>`+fl.map(f=>cardShell(f,f.extra)).join("");
@@ -668,8 +705,8 @@ function vPerto(){
   $("#view").innerHTML=h;
   const all=[...fl,...near.map(x=>x[0])];
   const go=()=>all.forEach(f=>fillCard(f,f.tipo==="cp"?4:3));
-  paintGps();$("#gpsPill").onclick=()=>{const blq=gps.code===1;startGPS();if(blq){const hp=$("#gpsHelp");hp.style.display=hp.style.display==="none"?"":"none"}};
-  let tk=0;go();timer=setInterval(()=>{if(document.hidden)return;paintGps();if(++tk%4===0){$("#clock").textContent=hm(new Date());go();procurarComboiosPerto().then(m=>{if(m&&state.tab==="perto"&&!state.board)render()})}},5e3);
+  rvMotor();rvCartao();paintGps();$("#gpsPill").onclick=()=>{const blq=gps.code===1;startGPS();if(blq){const hp=$("#gpsHelp");hp.style.display=hp.style.display==="none"?"":"none"}};
+  let tk=0;go();timer=setInterval(()=>{if(document.hidden)return;paintGps();rvMotor();rvCartao();if(++tk%4===0){$("#clock").textContent=hm(new Date());go();procurarComboiosPerto().then(m=>{if(m&&state.tab==="perto"&&!state.board)render()})}},5e3);
   if(!CLS&&gps.pos)loadCL().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
   if(!CM&&gps.pos)loadCM().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
   procurarComboiosPerto().then(mudou=>{if(mudou&&state.tab==="perto"&&!state.board)render()});
