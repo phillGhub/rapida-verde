@@ -7,11 +7,13 @@
 // Só reencaminha para estes dois sites e só para estes caminhos.
 const PROXY = {
   cm: { base: "https://api.carrismetropolitana.pt", path: /^\/v2\/[A-Za-z0-9_\-\/]+$/ },
-  ip: { base: "https://www.infraestruturasdeportugal.pt", path: /^\/negocios-e-servicos\/[^?#]+$/ }
+  ip: { base: "https://www.infraestruturasdeportugal.pt", path: /^\/negocios-e-servicos\/[^?#]+$/ },
+  ipma: { base: "https://api.ipma.pt", path: /^\/open-data\/[A-Za-z0-9_\-\/]+\.json$/ }
 };
 function ttlFor(p, u) {
   if (p === "cm" && /^\/v2\/(stops|lines|routes)$/.test(u)) return 21600; // listas: 6 h
   if (p === "ip" && /estacao-nome/.test(u)) return 86400;
+  if (p === "ipma") return /warnings/.test(u) ? 300 : 3600;
   return 15; // tempos em direto
 }
 

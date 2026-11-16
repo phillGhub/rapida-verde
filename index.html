@@ -2,7 +2,7 @@
 <html lang="pt-PT">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.workers.dev https://api.carrismetropolitana.pt https://raw.githubusercontent.com https://api.tomtom.com https://overpass-api.de; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.workers.dev https://api.carrismetropolitana.pt https://raw.githubusercontent.com https://api.tomtom.com https://overpass-api.de https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.ipma.pt https://nominatim.openstreetmap.org; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -64,12 +64,31 @@ input.q{width:100%;background:var(--card);color:var(--txt);border:1px solid var(
 .empty{color:var(--mut);font-size:14px;padding:8px 2px}
 a.link{color:var(--g)}
 svg{display:block;width:100%;height:auto}
+.wx-rays{transform-origin:70px 50px;animation:wxspin 18s linear infinite}
+.wx-pulse{animation:wxpulse 3s ease-in-out infinite}
+.wx-stars{animation:wxtw 3s ease-in-out infinite}
+.wx-drift{animation:wxdrift 7s ease-in-out infinite alternate}
+.wx-drift2{animation:wxdrift 11s ease-in-out infinite alternate-reverse}
+.wx-rain{animation:wxfall .9s linear infinite}.wx-rain.wx-slow{animation-duration:1.4s}.wx-rain.wx-fast{animation-duration:.6s}
+.wx-snow{animation:wxsnow 2.4s linear infinite}
+.wx-bolt{animation:wxflash 3.2s steps(1) infinite}
+.wx-fog{animation:wxfog 5s ease-in-out infinite alternate}
+@keyframes wxspin{to{transform:rotate(360deg)}}
+@keyframes wxpulse{50%{opacity:.35}}
+@keyframes wxtw{50%{opacity:.3}}
+@keyframes wxdrift{from{translate:-6px 0}to{translate:6px 0}}
+@keyframes wxfall{0%{transform:translate(0,-10px);opacity:0}20%{opacity:1}100%{transform:translate(-6px,28px);opacity:0}}
+@keyframes wxsnow{0%{transform:translate(0,-8px);opacity:0}20%{opacity:1}100%{transform:translate(5px,30px);opacity:0}}
+@keyframes wxflash{0%,88%,100%{opacity:0}90%,94%{opacity:1}}
+@keyframes wxfog{from{transform:translateX(-10px)}to{transform:translateX(10px)}}
+@media (prefers-reduced-motion:reduce){[class^="wx-"],[class*=" wx-"]{animation:none!important}}
 footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-height:1.5}
 </style>
 </head>
 <body>
 <main>
-<h1><span><b>transportes</b> · metro, comboios, autocarros</span><span id="clock"></span></h1>
+<h1><span><b>transportes</b></span><span style="display:flex;align-items:center;gap:10px"><span id="clock"></span><button id="defBtn" aria-label="Ajustes" style="background:none;border:0;font-size:20px;padding:0;cursor:pointer;line-height:1">⚙️</button></span></h1>
+<div id="chuva"></div>
 <div id="view"></div>
 <footer id="foot"></footer>
 </main>
@@ -79,7 +98,7 @@ footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-he
   <button data-t="comboios"><span>🚆</span>Comboios</button>
   <button data-t="autocarros"><span>🚌</span>Autocarros</button>
   <button data-t="transito"><span>🚗</span>Trânsito</button>
-  <button data-t="def"><span>⚙️</span>Ajustes</button>
+  <button data-t="tempo"><span>🌦️</span>Tempo</button>
 </nav>
 <script>
 // ======================================================================
@@ -143,7 +162,7 @@ function startGPS(){
   if(!navigator.geolocation){gps.err="este browser não tem GPS";gps.code=9;paintGps();return}
   if(gps.watch!=null)try{navigator.geolocation.clearWatch(gps.watch)}catch(e){}
   gps.err=null;gps.code=null;paintGps();
-  const ok=p=>{const first=!gps.pos;if(p.coords.speed!=null&&p.coords.speed>=0)gps.v=p.coords.speed*3.6;gps.pos=[p.coords.latitude,p.coords.longitude];gps.acc=p.coords.accuracy;gps.err=null;gps.code=null;gps.t=Date.now();paintGps();if(first&&state.tab==="perto"&&!state.board)render()};
+  const ok=p=>{const first=!gps.pos;if(first)setTimeout(()=>chuvaVerificar(true),500);if(p.coords.speed!=null&&p.coords.speed>=0)gps.v=p.coords.speed*3.6;gps.pos=[p.coords.latitude,p.coords.longitude];gps.acc=p.coords.accuracy;gps.err=null;gps.code=null;gps.t=Date.now();paintGps();if(first&&state.tab==="perto"&&!state.board)render()};
   const bad=e=>{gps.code=e.code;gps.err=e.code===1?"localização recusada":e.code===2?"sem sinal de GPS":"GPS a demorar";paintGps()};
   try{navigator.geolocation.getCurrentPosition(ok,bad,{maximumAge:60000,timeout:15000});gps.watch=navigator.geolocation.watchPosition(ok,bad,{enableHighAccuracy:true,maximumAge:10000,timeout:30000})}catch(e){gps.err="erro no GPS";gps.code=9;paintGps()}
 }
@@ -632,9 +651,9 @@ let timer=null;
 function render(){
   stopLine();clearInterval(timer);
   document.querySelectorAll("#tabs button").forEach(b=>b.classList.toggle("on",b.dataset.t===state.tab));
-  $("#clock").textContent=hm(new Date());
+  $("#clock").textContent=hm(new Date());chuvaFaixa();
   if(state.board)return renderBoard();
-  ({perto:vPerto,metro:vMetro,comboios:vComboios,autocarros:vAutocarros,transito:vTransito,def:vDef})[state.tab]();
+  ({perto:vPerto,metro:vMetro,comboios:vComboios,autocarros:vAutocarros,transito:vTransito,tempo:vTempo,def:vDef})[state.tab]();
 }
 
 // ---- Perto
@@ -940,6 +959,160 @@ function vTransito(){
   timer=setInterval(()=>{if(!document.hidden){$("#clock").textContent=hm(new Date());ttAtualizar(true)}},5*60e3);
 }
 
+// ======================================================================
+// TEMPO — Open-Meteo (modelos AROME/Météo-France, ECMWF…) + IPMA (previsão oficial e avisos)
+// ======================================================================
+const WMO={0:["Céu limpo","sol"],1:["Pouco nublado","sol"],2:["Parcialmente nublado","parcial"],3:["Nublado","nuvens"],45:["Nevoeiro","nevoeiro"],48:["Nevoeiro","nevoeiro"],
+  51:["Chuvisco fraco","chuvisco"],53:["Chuvisco","chuvisco"],55:["Chuvisco forte","chuvisco"],56:["Chuvisco gelado","chuvisco"],57:["Chuvisco gelado","chuvisco"],
+  61:["Chuva fraca","chuva"],63:["Chuva","chuva"],65:["Chuva forte","chuvaforte"],66:["Chuva gelada","chuva"],67:["Chuva gelada forte","chuvaforte"],
+  71:["Neve fraca","neve"],73:["Neve","neve"],75:["Neve forte","neve"],77:["Grãos de neve","neve"],80:["Aguaceiros fracos","aguaceiros"],81:["Aguaceiros","aguaceiros"],82:["Aguaceiros fortes","chuvaforte"],
+  85:["Aguaceiros de neve","neve"],86:["Aguaceiros de neve fortes","neve"],95:["Trovoada","trovoada"],96:["Trovoada com granizo","trovoada"],99:["Trovoada com granizo","trovoada"]};
+const wmo=c=>WMO[c]||["—","nuvens"];
+const CEU={sol:["#2b6cb0","#63b3ed"],parcial:["#2c5282","#7aa7d6"],nuvens:["#3a4a5c","#6b7f94"],nevoeiro:["#4a5560","#8a96a3"],chuvisco:["#34475c","#5f7a96"],chuva:["#263848","#4a6680"],
+  chuvaforte:["#1c2a38","#3b5266"],aguaceiros:["#2d4a66","#5f88ad"],neve:["#506478","#a9bccf"],trovoada:["#1a1f2e","#3d4560"]};
+const NOITE=["#0b1430","#1f2c55"];
+// Cena animada (SVG) — desenho original. anim=false para os ícones pequenos.
+function cena(tipo,dia,anim=true){
+  const a=anim?"":" style=\"animation:none\"";
+  const sol=dia?`<g class="wx-rays"${a}>${Array.from({length:8},(_,i)=>`<rect x="68" y="18" width="4" height="12" rx="2" fill="#ffd34d" transform="rotate(${i*45} 70 50)"/>`).join("")}</g><circle cx="70" cy="50" r="17" fill="#ffd34d"/><circle cx="70" cy="50" r="17" fill="url(#brilho)" class="wx-pulse"${a}/>`
+    :`<g class="wx-stars"${a}><circle cx="30" cy="22" r="1.6" fill="#fff"/><circle cx="150" cy="18" r="1.3" fill="#fff"/><circle cx="120" cy="40" r="1.1" fill="#fff"/><circle cx="170" cy="50" r="1.4" fill="#fff"/></g><circle cx="70" cy="48" r="16" fill="#f4f1d0"/><circle cx="79" cy="42" r="14" fill="${NOITE[0]}"/>`;
+  const nuvem=(x,y,s,cor,cls)=>`<g class="${cls}"${a} transform="translate(${x} ${y}) scale(${s})"><ellipse cx="40" cy="30" rx="34" ry="16" fill="${cor}"/><circle cx="26" cy="22" r="15" fill="${cor}"/><circle cx="48" cy="16" r="19" fill="${cor}"/><circle cx="64" cy="26" r="13" fill="${cor}"/></g>`;
+  const gotas=(n,len,cor,cls)=>Array.from({length:n},(_,i)=>`<line class="${cls}"${a} style="animation-delay:${(i*0.37)%1.2}s" x1="${55+i*(90/n)}" y1="88" x2="${51+i*(90/n)}" y2="${88+len}" stroke="${cor}" stroke-width="3" stroke-linecap="round"/>`).join("");
+  let s=`<defs><radialGradient id="brilho"><stop offset="0" stop-color="#fff6c4" stop-opacity=".9"/><stop offset="1" stop-color="#ffd34d" stop-opacity="0"/></radialGradient></defs>`;
+  if(tipo==="sol")s+=sol;
+  else if(tipo==="parcial")s+=sol+nuvem(78,40,1,"#f1f5f9","wx-drift");
+  else if(tipo==="nuvens")s+=nuvem(30,22,1,"#cbd5e1","wx-drift2")+nuvem(70,40,1.1,"#eef2f7","wx-drift");
+  else if(tipo==="nevoeiro")s+=nuvem(50,22,1,"#d5dbe2","wx-drift")+[70,84,98].map((y,i)=>`<rect class="wx-fog"${a} style="animation-delay:${i*.8}s" x="30" y="${y}" width="140" height="7" rx="3.5" fill="#e2e8f0" opacity=".75"/>`).join("");
+  else if(tipo==="chuvisco")s+=nuvem(50,24,1.1,"#cfd8e3","wx-drift")+gotas(6,7,"#9fd3ff","wx-rain wx-slow");
+  else if(tipo==="chuva"||tipo==="aguaceiros")s+=(tipo==="aguaceiros"&&dia?sol:"")+nuvem(48,26,1.15,tipo==="chuva"?"#b8c4d2":"#e2e8f0","wx-drift")+gotas(7,12,"#7cc4ff","wx-rain");
+  else if(tipo==="chuvaforte")s+=nuvem(30,18,1,"#8b9aad","wx-drift2")+nuvem(58,28,1.2,"#a3b1c2","wx-drift")+gotas(11,16,"#62b4ff","wx-rain wx-fast");
+  else if(tipo==="neve")s+=nuvem(48,24,1.1,"#e5ebf2","wx-drift")+Array.from({length:8},(_,i)=>`<circle class="wx-snow"${a} style="animation-delay:${(i*0.45)%2.2}s" cx="${58+i*11}" cy="90" r="3" fill="#fff"/>`).join("");
+  else if(tipo==="trovoada")s+=nuvem(40,20,1.2,"#6b7a8f","wx-drift")+`<polygon class="wx-bolt"${a} points="98,82 86,106 97,106 90,128 114,98 102,98 110,82" fill="#ffe066"/>`+gotas(5,12,"#7cc4ff","wx-rain");
+  return `<svg viewBox="0 0 200 140" aria-hidden="true">${s}</svg>`;
+}
+// --- fontes
+async function ipma(path){
+  try{return await getJSON("https://api.ipma.pt"+path,12000)}
+  catch(e){return await getJSON(W()+"/?p=ipma&u="+encodeURIComponent(path),12000)}
+}
+let IPMA_LOC=null,IPMA_TIPOS=null;const avisosCache={t:0,L:[]};
+async function ipmaLocais(){if(IPMA_LOC)return IPMA_LOC;const c=ls.get("tp_ipmaloc",null);if(c&&Date.now()-c.t<7*864e5){IPMA_LOC=c.L;return IPMA_LOC}
+  const j=await ipma("/open-data/distrits-islands.json");IPMA_LOC=(j.data||[]).map(x=>({id:x.globalIdLocal,nome:x.local,lat:+x.latitude,lon:+x.longitude,area:x.idAreaAviso}));ls.set("tp_ipmaloc",{t:Date.now(),L:IPMA_LOC});return IPMA_LOC}
+async function ipmaTipos(){if(IPMA_TIPOS)return IPMA_TIPOS;const c=ls.get("tp_ipmatipos",null);if(c&&Date.now()-c.t<30*864e5){IPMA_TIPOS=c.m;return IPMA_TIPOS}
+  const j=await ipma("/open-data/weather-type-classe.json");IPMA_TIPOS={};(j.data||[]).forEach(x=>IPMA_TIPOS[x.idWeatherType]=x.descWeatherTypePT);ls.set("tp_ipmatipos",{t:Date.now(),m:IPMA_TIPOS});return IPMA_TIPOS}
+async function ipmaAvisos(){if(Date.now()-avisosCache.t<10*60e3)return avisosCache.L;const j=await ipma("/open-data/forecast/warnings/warnings_www.json");avisosCache.L=Array.isArray(j)?j:(j.data||[]);avisosCache.t=Date.now();return avisosCache.L}
+const omURL=(lat,lon)=>`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,is_day&minutely_15=precipitation,weather_code&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset,uv_index_max&timezone=Europe%2FLisbon&forecast_days=7&forecast_minutely_15=8&past_minutely_15=1`;
+const nomeCache={};
+async function nomeDoSitio(lat,lon){const k=lat.toFixed(2)+","+lon.toFixed(2);if(nomeCache[k])return nomeCache[k];
+  try{const j=await getJSON(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&accept-language=pt&lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`,8000);
+    const a=j.address||{};const n=a.city||a.town||a.village||a.municipality||a.county||"";if(n){nomeCache[k]=n;return n}}catch(e){}
+  return null}
+// Chuva na próxima hora (blocos de 15 min)
+function chuvaProxima(om){
+  const m=om&&om.minutely_15;if(!m||!m.time)return null;const agora=Date.now();
+  const pts=m.time.map((t,i)=>({t:new Date(t).getTime(),mm:m.precipitation[i]||0})).filter(p=>p.t+15*60e3>agora);
+  const prox=pts.filter(p=>p.t<agora+60*60e3);
+  const ja=(om.current&&om.current.precipitation>0)||(prox[0]&&prox[0].mm>=0.1&&prox[0].t<=agora);
+  const primeiro=prox.find(p=>p.mm>=0.1);const total=prox.reduce((s,p)=>s+p.mm,0);
+  return{ja,em:primeiro?Math.max(0,Math.round((primeiro.t-agora)/60e3)):null,total,pts:pts.slice(0,8)};
+}
+// --- separador
+const TEMPO={lugar:null,dados:null,t:0,busy:false};
+function vTempo(){
+  const rec=ls.get("tp_lugares",[])||[];
+  let h=`<h2>Tempo</h2><input class="q" id="tq" placeholder="Procurar localidade em Portugal" value="${esc(state.tq||"")}" autocomplete="off"><div id="tres"></div>
+  <div style="margin:-2px 0 10px;overflow-x:auto;white-space:nowrap"><span class="chip" data-lug="aqui" style="${!TEMPO.lugar?"border-color:var(--g);color:var(--g)":""}">📍 Aqui</span>${rec.map((l,i)=>`<span class="chip" data-lug="${i}" style="${TEMPO.lugar&&TEMPO.lugar.nome===l.nome&&TEMPO.lugar.lat===l.lat?"border-color:var(--g);color:var(--g)":""}">${esc(l.nome)}</span>`).join("")}</div>
+  <div id="tw"><div class="empty">A carregar o tempo…</div></div>`;
+  $("#view").innerHTML=h;
+  let t=null;const q=$("#tq");
+  q.oninput=()=>{state.tq=q.value;clearTimeout(t);const v=q.value.trim();if(v.length<2){$("#tres").innerHTML="";return}
+    t=setTimeout(async()=>{try{const j=await getJSON(`https://geocoding-api.open-meteo.com/v1/search?name=${encodeURIComponent(v)}&count=10&language=pt&countryCode=PT`,8000);if(q.value.trim()!==v)return;
+      const R=j.results||[];$("#tres").innerHTML=R.length?`<div class="card">${R.map((r,i)=>`<div class="row tap" data-geo='${esc(JSON.stringify({nome:r.name,lat:r.latitude,lon:r.longitude,sub:[r.admin2,r.admin1].filter(Boolean).join(", ")}))}'><span>📍</span><span class="m"><b>${esc(r.name)}</b><small>${esc([r.admin3,r.admin2,r.admin1].filter(Boolean).join(" · "))}</small></span><span class="sub">›</span></div>`).join("")}</div>`:`<div class="empty">Nenhuma localidade com esse nome.</div>`}
+      catch(e){$("#tres").innerHTML=`<div class="card sub">⚠️ Não consegui procurar (${esc(e.message)}).</div>`}},300)};
+  $("#tres").onclick=e=>{const r=e.target.closest("[data-geo]");if(!r)return;const l=JSON.parse(r.dataset.geo);
+    let L=(ls.get("tp_lugares",[])||[]).filter(x=>!(x.nome===l.nome&&Math.abs(x.lat-l.lat)<0.01));L.unshift(l);ls.set("tp_lugares",L.slice(0,6));
+    TEMPO.lugar=l;TEMPO.dados=null;state.tq="";render()};
+  $("#view").querySelector("div[style*='white-space:nowrap']").onclick=e=>{const c=e.target.closest("[data-lug]");if(!c)return;
+    TEMPO.lugar=c.dataset.lug==="aqui"?null:(ls.get("tp_lugares",[])||[])[+c.dataset.lug];TEMPO.dados=null;render()};
+  tempoCarregar();timer=setInterval(()=>{if(!document.hidden)tempoCarregar(true)},10*60e3);
+}
+async function tempoCarregar(force){
+  const el=$("#tw");if(!el)return;
+  const L=TEMPO.lugar,pos=L?[L.lat,L.lon]:gps.pos;
+  if(!pos){el.innerHTML=`<div class="card sub">Sem localização. Liga o GPS ou procura uma localidade acima.</div>`;return}
+  const chave=pos.map(x=>x.toFixed(2)).join(",");
+  if(!force&&TEMPO.dados&&TEMPO.dados.chave===chave&&Date.now()-TEMPO.dados.t<10*60e3){tempoPintar();return}
+  if(TEMPO.busy)return;TEMPO.busy=true;
+  try{
+    const[om,locs,tipos]=await Promise.all([getJSON(omURL(pos[0],pos[1]),12000),ipmaLocais().catch(()=>null),ipmaTipos().catch(()=>null)]);
+    let ip=null,prev=null,avisos=[];
+    if(locs&&locs.length){ip=locs.map(l=>({...l,d:hav(pos,[l.lat,l.lon])})).sort((a,b)=>a.d-b.d)[0];
+      const[p,av]=await Promise.all([ipma(`/open-data/forecast/meteorology/cities/daily/${ip.id}.json`).catch(()=>null),ipmaAvisos().catch(()=>[])]);
+      prev=p&&p.data;avisos=(av||[]).filter(a=>a.idAreaAviso===ip.area&&a.awarenessLevelID!=="green"&&new Date(a.endTime).getTime()>Date.now())}
+    const nome=L?L.nome:(await nomeDoSitio(pos[0],pos[1]))||(ip?"perto de "+ip.nome:"Aqui");
+    TEMPO.dados={chave,t:Date.now(),om,ip,prev,avisos,tipos,nome,sub:L?L.sub:"localização atual"};
+    if(!L)chuvaAtualizar(om);
+  }catch(e){if(!TEMPO.dados||TEMPO.dados.chave!==chave){el.innerHTML=`<div class="card sub">⚠️ Não consegui obter o tempo (${esc(e.message)}).</div>`;TEMPO.busy=false;return}}
+  TEMPO.busy=false;tempoPintar();
+}
+const DIAS=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+const rumo=g=>["N","NE","E","SE","S","SO","O","NO"][Math.round(((g%360)+360)%360/45)%8];
+function tempoPintar(){
+  const el=$("#tw"),D=TEMPO.dados;if(!el||!D)return;const om=D.om,c=om.current||{};
+  const[desc,tipo]=wmo(c.weather_code),dia=c.is_day!==0,ceu=dia?(CEU[tipo]||CEU.nuvens):NOITE;
+  let h=`<div class="card" style="background:linear-gradient(160deg,${ceu[0]},${ceu[1]});border:0;position:relative;overflow:hidden;color:#fff">
+    <div style="display:flex;align-items:center;gap:6px"><div style="width:52%;max-width:220px;margin:-6px 0 -10px -8px">${cena(tipo,dia)}</div>
+      <div style="flex:1;text-align:right"><div style="font-size:52px;font-weight:800;line-height:1">${Math.round(c.temperature_2m)}°</div><div style="font-weight:700;font-size:16px">${esc(desc)}</div><div style="font-size:13px;opacity:.85">Sensação ${Math.round(c.apparent_temperature)}°</div></div></div>
+    <div style="font-size:15px;font-weight:700;margin-top:6px">${esc(D.nome)}</div><div style="font-size:12px;opacity:.8">${esc(D.sub||"")} · atualizado às ${hm(new Date(D.t))}</div></div>`;
+  // chuva na próxima hora
+  const ch=chuvaProxima(om);
+  if(ch){const max=Math.max(0.5,...ch.pts.map(p=>p.mm));
+    const msg=ch.ja?(ch.total>=0.1?"Está a chover · deve continuar na próxima hora":"Está a chover, mas deve parar em breve"):ch.em!=null?`Vai chover dentro de ~${ch.em} min`:"Sem chuva na próxima hora";
+    h+=`<div class="card"><div class="lbl">☔ Próximas 2 horas</div><div style="font-weight:700;margin:4px 0 8px;color:${ch.ja||ch.em!=null?"#7cc4ff":"var(--g)"}">${msg}</div>
+      <div style="display:flex;align-items:flex-end;gap:5px;height:54px">${ch.pts.map(p=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%"><div style="width:100%;border-radius:4px 4px 0 0;background:${p.mm>0?"#4aa3ff":"var(--line)"};height:${p.mm>0?Math.max(8,p.mm/max*100):4}%"></div></div>`).join("")}</div>
+      <div style="display:flex;gap:5px;margin-top:3px">${ch.pts.map(p=>`<div class="sub" style="flex:1;text-align:center;font-size:10px">${hm(new Date(p.t))}</div>`).join("")}</div></div>`}
+  // avisos IPMA
+  if(D.avisos.length){const cor={yellow:"#f7c300",orange:"#ff8c1a",red:"#e4003a"},niv={yellow:"Amarelo",orange:"Laranja",red:"Vermelho"};
+    h+=`<div class="card" style="border-color:${cor[D.avisos.some(a=>a.awarenessLevelID==="red")?"red":D.avisos.some(a=>a.awarenessLevelID==="orange")?"orange":"yellow"]}"><div class="lbl">⚠️ Avisos do IPMA · distrito de ${esc(D.ip.nome)}</div>${D.avisos.sort((a,b)=>new Date(a.startTime)-new Date(b.startTime)).map(a=>`<div class="row"><span style="width:12px;height:12px;border-radius:50%;background:${cor[a.awarenessLevelID]||"#999"};flex:none"></span><span class="m"><b>${esc(a.awarenessTypeName)}</b> · ${niv[a.awarenessLevelID]||esc(a.awarenessLevelID)}<small>${new Date(a.startTime).toLocaleString("pt-PT",{weekday:"short",hour:"2-digit",minute:"2-digit"})} → ${new Date(a.endTime).toLocaleString("pt-PT",{weekday:"short",hour:"2-digit",minute:"2-digit"})}${a.text?" · "+esc(a.text):""}</small></span></div>`).join("")}</div>`}
+  // por hora
+  const H=om.hourly;if(H){const agora=Date.now();let i0=H.time.findIndex(t=>new Date(t).getTime()+3600e3>agora);if(i0<0)i0=0;
+    h+=`<div class="card"><div class="lbl">Próximas 24 horas</div><div style="display:flex;gap:4px;overflow-x:auto;margin-top:8px;padding-bottom:4px">${H.time.slice(i0,i0+24).map((t,j)=>{const i=i0+j,[,tp]=wmo(H.weather_code[i]);
+      return `<div style="flex:none;width:52px;text-align:center"><div class="sub" style="font-size:11px">${j===0?"Agora":String(new Date(t).getHours()).padStart(2,"0")+"h"}</div><div style="width:44px;margin:0 auto">${cena(tp,H.is_day[i]!==0,false)}</div><div style="font-weight:700">${Math.round(H.temperature_2m[i])}°</div><div style="font-size:11px;color:${H.precipitation_probability[i]>=40?"#7cc4ff":"var(--mut)"}">${H.precipitation_probability[i]!=null?H.precipitation_probability[i]+"%":""}</div></div>`}).join("")}</div></div>`}
+  // 7 dias
+  const Dd=om.daily;if(Dd){const mn=Math.min(...Dd.temperature_2m_min),mx=Math.max(...Dd.temperature_2m_max);
+    h+=`<div class="card"><div class="lbl">Próximos 7 dias</div>${Dd.time.map((t,i)=>{const[ds,tp]=wmo(Dd.weather_code[i]),d=new Date(t+"T12:00");const a=(Dd.temperature_2m_min[i]-mn)/(mx-mn||1)*100,b=(Dd.temperature_2m_max[i]-mn)/(mx-mn||1)*100;
+      return `<div class="row" title="${esc(ds)}"><span style="width:38px;font-weight:700">${i===0?"Hoje":DIAS[d.getDay()]}</span><span style="width:36px">${cena(tp,true,false)}</span><span style="width:40px;font-size:12px;color:#7cc4ff">${Dd.precipitation_probability_max[i]>=20?Dd.precipitation_probability_max[i]+"%":""}</span><span class="sub" style="width:28px;text-align:right">${Math.round(Dd.temperature_2m_min[i])}°</span><span style="flex:1;height:6px;background:var(--line);border-radius:3px;position:relative;margin:0 6px"><span style="position:absolute;left:${a}%;right:${100-b}%;top:0;bottom:0;border-radius:3px;background:linear-gradient(90deg,#63b3ed,#f6ad55)"></span></span><span style="width:28px;font-weight:700">${Math.round(Dd.temperature_2m_max[i])}°</span></div>`}).join("")}</div>`}
+  // IPMA oficial
+  if(D.prev&&D.prev.length){h+=`<div class="card"><div class="lbl">Previsão oficial IPMA · ${esc(D.ip.nome)}</div>${D.prev.map(p=>{const d=new Date(p.forecastDate+"T12:00");
+      return `<div class="row"><span style="width:38px;font-weight:700">${DIAS[d.getDay()]}</span><span class="m">${esc((D.tipos&&D.tipos[p.idWeatherType])||"—")}<small>vento ${esc(p.predWindDir||"")}${p.precipitaProb!=null&&+p.precipitaProb>0?" · chuva "+Math.round(+p.precipitaProb)+"%":""}</small></span><span class="in" style="color:var(--txt)">${Math.round(+p.tMin)}° / ${Math.round(+p.tMax)}°</span></div>`}).join("")}</div>`}
+  // detalhes
+  if(Dd)h+=`<div class="card" style="display:grid;grid-template-columns:1fr 1fr;gap:10px">${[
+      ["💨 Vento",`${Math.round(c.wind_speed_10m)} km/h ${rumo(c.wind_direction_10m||0)}`],["🌬️ Rajadas",`${Math.round(c.wind_gusts_10m)} km/h`],
+      ["💧 Humidade",`${Math.round(c.relative_humidity_2m)}%`],["☀️ UV máx.",`${Math.round(Dd.uv_index_max[0]||0)}`],
+      ["🌅 Nascer do sol",Dd.sunrise[0].slice(11,16)],["🌇 Pôr do sol",Dd.sunset[0].slice(11,16)]].map(([k,v])=>`<div><div class="sub" style="font-size:12px">${k}</div><div style="font-weight:700;font-size:17px">${v}</div></div>`).join("")}</div>`;
+  h+=`<div class="sub" style="font-size:11px;margin:0 2px 8px;line-height:1.5">Fontes: IPMA (previsão oficial e avisos) · Open-Meteo (modelos Météo-France AROME, ECMWF e outros; chuva de 15 em 15 min). Atualiza sozinho a cada 10 min.</div>`;
+  el.innerHTML=h;
+}
+// --- aviso de chuva em todos os separadores
+const CHUVA={t:0,estado:null,fechado:ls.get("tp_chuvaoff",null)};
+async function chuvaVerificar(force){
+  if(!gps.pos||(!force&&Date.now()-CHUVA.t<10*60e3))return;CHUVA.t=Date.now();
+  try{const[la,lo]=gps.pos;const om=await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${la.toFixed(2)}&longitude=${lo.toFixed(2)}&current=precipitation,weather_code&minutely_15=precipitation,weather_code&forecast_minutely_15=6&past_minutely_15=1&timezone=Europe%2FLisbon`,10000);chuvaAtualizar(om)}catch(e){}
+}
+function chuvaAtualizar(om){const ch=chuvaProxima(om);CHUVA.estado=ch;CHUVA.t=Date.now();chuvaFaixa()}
+function chuvaFaixa(){
+  const el=document.getElementById("chuva");if(!el)return;const ch=CHUVA.estado;
+  if(!ch||(!ch.ja&&ch.em==null)){el.innerHTML="";return}
+  const chave=ch.ja?"ja":"em";if(CHUVA.fechado&&CHUVA.fechado.k===chave&&Date.now()-CHUVA.fechado.t<90*60e3){el.innerHTML="";return}
+  const txt=ch.ja?"Está a chover aqui"+(ch.total>=0.1?" · deve continuar na próxima hora":""):ch.em<=5?"Vai começar a chover aqui dentro de minutos":`Vai chover aqui dentro de ~${ch.em} min`;
+  el.innerHTML=`<div class="card tap" id="chuvaIr" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:linear-gradient(90deg,#1e3a5f,#25507f);border-color:#3b82c4;color:#fff">
+    <span style="width:46px;flex:none">${cena(ch.ja?"chuva":"aguaceiros",true)}</span><span style="flex:1"><b>🌧️ ${txt}</b><div style="font-size:12px;opacity:.85">${ch.total>=0.1?"cerca de "+ch.total.toFixed(1).replace(".",",")+" mm na próxima hora · ":""}toca para ver o tempo</div></span>
+    <button id="chuvaX" aria-label="Fechar" style="background:none;border:0;color:#fff;font-size:20px;padding:4px 6px;cursor:pointer">✕</button></div>`;
+  $("#chuvaX").onclick=e=>{e.stopPropagation();CHUVA.fechado={k:chave,t:Date.now()};ls.set("tp_chuvaoff",CHUVA.fechado);el.innerHTML=""};
+  $("#chuvaIr").onclick=()=>{state.board=null;state.tab="tempo";TEMPO.lugar=null;ls.set("tp_tab","tempo");render();window.scrollTo(0,0)};
+}
+setInterval(()=>{if(!document.hidden)chuvaVerificar()},60e3);
+
 // ---- Quadro de uma estação/paragem
 function renderBoard(){
   const f=state.board;addRecent(f);
@@ -997,7 +1170,8 @@ function vDef(){
 document.addEventListener("click",e=>{const o=e.target.closest("[data-open]");if(!o)return;try{state.board=JSON.parse(o.dataset.open);render()}catch(err){}});
 $("#tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.t;state.board=null;ls.set("tp_tab",state.tab);render();window.scrollTo(0,0)};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()});
-$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Localização das estações de comboio: © colaboradores do OpenStreetMap · Trânsito: © TomTom.<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
+$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Localização das estações de comboio: © colaboradores do OpenStreetMap · Trânsito: © TomTom · Tempo: IPMA e Open-Meteo.<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
+$("#defBtn").onclick=()=>{state.board=null;state.tab="def";ls.set("tp_tab","def");render();window.scrollTo(0,0)};
 startGPS();
 loadMetroStations().then(()=>{if(!state.board&&(state.tab==="metro"||state.tab==="perto"))render()});
 render();
