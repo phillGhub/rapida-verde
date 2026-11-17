@@ -13,7 +13,7 @@ const PROXY = {
 function ttlFor(p, u) {
   if (p === "cm" && /^\/v2\/(stops|lines|routes)$/.test(u)) return 21600; // listas: 6 h
   if (p === "ip" && /estacao-nome/.test(u)) return 86400;
-  if (p === "ipma") return /warnings/.test(u) ? 300 : 3600;
+  if (p === "ipma") return /warnings|observation\/meteorology\/stations\/observations/.test(u) ? 300 : 3600;
   return 15; // tempos em direto
 }
 

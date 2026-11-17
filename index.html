@@ -1007,14 +1007,38 @@ async function nomeDoSitio(lat,lon){const k=lat.toFixed(2)+","+lon.toFixed(2);if
   try{const j=await getJSON(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&accept-language=pt&lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`,8000);
     const a=j.address||{};const n=a.city||a.town||a.village||a.municipality||a.county||"";if(n){nomeCache[k]=n;return n}}catch(e){}
   return null}
+// Chuva MEDIDA nas estações do IPMA (a previsão de 15 min do Open-Meteo para Portugal é interpolada do modelo)
+let IPMA_EST=null;const obsCache={t:0,j:null};
+async function ipmaEstacoes(){if(IPMA_EST)return IPMA_EST;const c=ls.get("tp_ipmaest",null);if(c&&Date.now()-c.t<30*864e5){IPMA_EST=c.L;return IPMA_EST}
+  const j=await ipma("/open-data/observation/meteorology/stations/stations.json");
+  IPMA_EST=(Array.isArray(j)?j:j.features||[]).map(f=>({id:String(f.properties&&f.properties.idEstacao),nome:f.properties&&f.properties.localEstacao,lon:+f.geometry.coordinates[0],lat:+f.geometry.coordinates[1]})).filter(e=>e.id&&!isNaN(e.lat));
+  ls.set("tp_ipmaest",{t:Date.now(),L:IPMA_EST});return IPMA_EST}
+async function ipmaObs(){if(obsCache.j&&Date.now()-obsCache.t<10*60e3)return obsCache.j;obsCache.j=await ipma("/open-data/observation/meteorology/stations/observations.json");obsCache.t=Date.now();return obsCache.j}
+async function chuvaObservada(pos){
+  try{
+    const[E,O]=await Promise.all([ipmaEstacoes(),ipmaObs()]);
+    const horas=Object.keys(O).sort().reverse();   // mais recente primeiro (UTC)
+    const perto=E.map(e=>({...e,d:hav(pos,[e.lat,e.lon])})).filter(e=>e.d<35).sort((a,b)=>a.d-b.d);
+    for(const e of perto){
+      const serie=horas.slice(0,6).map(h=>{const r=O[h]&&O[h][e.id];const mm=r&&r.precAcumulada;return{t:Date.parse(h+"Z"),mm:(mm==null||mm<0)?null:+mm}}).filter(x=>x.mm!=null);
+      if(!serie.length||Date.now()-serie[0].t>3*3600e3)continue;   // estação sem dados recentes: tenta a seguinte
+      const ultima=serie[0],soma2=serie.slice(0,2).reduce((s,x)=>s+x.mm,0),soma6=serie.reduce((s,x)=>s+x.mm,0);
+      return{estacao:e.nome,d:e.d,hora:ultima.t,mm:ultima.mm,mm6:soma6,chove:ultima.mm>=0.1||soma2>=0.3,horasAtras:Math.round((Date.now()-ultima.t)/3600e3)};
+    }
+  }catch(e){}
+  return null;
+}
 // Chuva na próxima hora (blocos de 15 min)
-function chuvaProxima(om){
+function chuvaProxima(om,obs){
   const m=om&&om.minutely_15;if(!m||!m.time)return null;const agora=Date.now();
   const pts=m.time.map((t,i)=>({t:new Date(t).getTime(),mm:m.precipitation[i]||0})).filter(p=>p.t+15*60e3>agora);
   const prox=pts.filter(p=>p.t<agora+60*60e3);
-  const ja=(om.current&&om.current.precipitation>0)||(prox[0]&&prox[0].mm>=0.1&&prox[0].t<=agora);
+  const jaModelo=(om.current&&om.current.precipitation>0)||(prox[0]&&prox[0].mm>=0.1&&prox[0].t<=agora)||[51,53,55,61,63,65,80,81,82,95,96,99].includes(om.current&&om.current.weather_code);
+  const ja=jaModelo||!!(obs&&obs.chove);
   const primeiro=prox.find(p=>p.mm>=0.1);const total=prox.reduce((s,p)=>s+p.mm,0);
-  return{ja,em:primeiro?Math.max(0,Math.round((primeiro.t-agora)/60e3)):null,total,pts:pts.slice(0,8)};
+  // probabilidade de chuva nesta hora e na próxima (modelo horário)
+  const H=om.hourly;let prob=null;if(H){const i=H.time.findIndex(t=>new Date(t).getTime()+3600e3>agora);if(i>=0)prob=Math.max(H.precipitation_probability[i]||0,H.precipitation_probability[i+1]||0)}
+  return{ja,obs:obs||null,prob,em:primeiro?Math.max(0,Math.round((primeiro.t-agora)/60e3)):(!ja&&prob!=null&&prob>=70?30:null),total,pts:pts.slice(0,8)};
 }
 // --- separador
 const TEMPO={lugar:null,dados:null,t:0,busy:false};
@@ -1044,14 +1068,14 @@ async function tempoCarregar(force){
   if(!force&&TEMPO.dados&&TEMPO.dados.chave===chave&&Date.now()-TEMPO.dados.t<10*60e3){tempoPintar();return}
   if(TEMPO.busy)return;TEMPO.busy=true;
   try{
-    const[om,locs,tipos]=await Promise.all([getJSON(omURL(pos[0],pos[1]),12000),ipmaLocais().catch(()=>null),ipmaTipos().catch(()=>null)]);
+    const[om,locs,tipos,obs]=await Promise.all([getJSON(omURL(pos[0],pos[1]),12000),ipmaLocais().catch(()=>null),ipmaTipos().catch(()=>null),chuvaObservada(pos)]);
     let ip=null,prev=null,avisos=[];
     if(locs&&locs.length){ip=locs.map(l=>({...l,d:hav(pos,[l.lat,l.lon])})).sort((a,b)=>a.d-b.d)[0];
       const[p,av]=await Promise.all([ipma(`/open-data/forecast/meteorology/cities/daily/${ip.id}.json`).catch(()=>null),ipmaAvisos().catch(()=>[])]);
       prev=p&&p.data;avisos=(av||[]).filter(a=>a.idAreaAviso===ip.area&&a.awarenessLevelID!=="green"&&new Date(a.endTime).getTime()>Date.now())}
     const nome=L?L.nome:(await nomeDoSitio(pos[0],pos[1]))||(ip?"perto de "+ip.nome:"Aqui");
-    TEMPO.dados={chave,t:Date.now(),om,ip,prev,avisos,tipos,nome,sub:L?L.sub:"localização atual"};
-    if(!L)chuvaAtualizar(om);
+    TEMPO.dados={chave,t:Date.now(),om,ip,prev,avisos,tipos,nome,obs,sub:L?L.sub:"localização atual"};
+    if(!L)chuvaAtualizar(om,obs);
   }catch(e){if(!TEMPO.dados||TEMPO.dados.chave!==chave){el.innerHTML=`<div class="card sub">⚠️ Não consegui obter o tempo (${esc(e.message)}).</div>`;TEMPO.busy=false;return}}
   TEMPO.busy=false;tempoPintar();
 }
@@ -1059,18 +1083,22 @@ const DIAS=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
 const rumo=g=>["N","NE","E","SE","S","SO","O","NO"][Math.round(((g%360)+360)%360/45)%8];
 function tempoPintar(){
   const el=$("#tw"),D=TEMPO.dados;if(!el||!D)return;const om=D.om,c=om.current||{};
-  const[desc,tipo]=wmo(c.weather_code),dia=c.is_day!==0,ceu=dia?(CEU[tipo]||CEU.nuvens):NOITE;
+  let[desc,tipo]=wmo(c.weather_code);const dia=c.is_day!==0;
+  const ob=D.obs;if(ob&&ob.chove&&!/chuv|aguac|trovo|neve/.test(tipo)){tipo=ob.mm>=2?"chuvaforte":"chuva";desc=ob.mm>=2?"Chuva forte":"Chuva"}
+  const ceu=dia?(CEU[tipo]||CEU.nuvens):NOITE;
   let h=`<div class="card" style="background:linear-gradient(160deg,${ceu[0]},${ceu[1]});border:0;position:relative;overflow:hidden;color:#fff">
     <div style="display:flex;align-items:center;gap:6px"><div style="width:52%;max-width:220px;margin:-6px 0 -10px -8px">${cena(tipo,dia)}</div>
       <div style="flex:1;text-align:right"><div style="font-size:52px;font-weight:800;line-height:1">${Math.round(c.temperature_2m)}°</div><div style="font-weight:700;font-size:16px">${esc(desc)}</div><div style="font-size:13px;opacity:.85">Sensação ${Math.round(c.apparent_temperature)}°</div></div></div>
+    ${ob?`<div style="margin-top:8px;font-size:13px;background:rgba(0,0,0,.18);border-radius:10px;padding:6px 9px">${ob.chove?"🌧️ <b>Está a chover</b>":"🌂 Sem chuva"} medido na estação IPMA de ${esc(ob.estacao)} (${dist(ob.d)}): ${ob.mm.toFixed(1).replace(".",",")} mm na última hora · ${ob.mm6.toFixed(1).replace(".",",")} mm nas últimas 6 h${ob.horasAtras>=1?` · dados de há ${ob.horasAtras} h`:""}</div>`:""}
     <div style="font-size:15px;font-weight:700;margin-top:6px">${esc(D.nome)}</div><div style="font-size:12px;opacity:.8">${esc(D.sub||"")} · atualizado às ${hm(new Date(D.t))}</div></div>`;
   // chuva na próxima hora
-  const ch=chuvaProxima(om);
+  const ch=chuvaProxima(om,D.obs);
   if(ch){const max=Math.max(0.5,...ch.pts.map(p=>p.mm));
-    const msg=ch.ja?(ch.total>=0.1?"Está a chover · deve continuar na próxima hora":"Está a chover, mas deve parar em breve"):ch.em!=null?`Vai chover dentro de ~${ch.em} min`:"Sem chuva na próxima hora";
+    const msg=ch.ja?((ch.total>=0.1||(ch.prob||0)>=50)?"Está a chover · deve continuar na próxima hora":"Está a chover · pode parar em breve"):ch.em!=null?(ch.total>=0.1?`Vai chover dentro de ~${ch.em} min`:`Chuva provável na próxima hora (${ch.prob}%)`):(ch.prob!=null&&ch.prob>=40?`Possível chuva na próxima hora (${ch.prob}%)`:"Sem chuva prevista na próxima hora");
     h+=`<div class="card"><div class="lbl">☔ Próximas 2 horas</div><div style="font-weight:700;margin:4px 0 8px;color:${ch.ja||ch.em!=null?"#7cc4ff":"var(--g)"}">${msg}</div>
       <div style="display:flex;align-items:flex-end;gap:5px;height:54px">${ch.pts.map(p=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%"><div style="width:100%;border-radius:4px 4px 0 0;background:${p.mm>0?"#4aa3ff":"var(--line)"};height:${p.mm>0?Math.max(8,p.mm/max*100):4}%"></div></div>`).join("")}</div>
-      <div style="display:flex;gap:5px;margin-top:3px">${ch.pts.map(p=>`<div class="sub" style="flex:1;text-align:center;font-size:10px">${hm(new Date(p.t))}</div>`).join("")}</div></div>`}
+      <div style="display:flex;gap:5px;margin-top:3px">${ch.pts.map(p=>`<div class="sub" style="flex:1;text-align:center;font-size:10px">${hm(new Date(p.t))}</div>`).join("")}</div>
+      <div class="sub" style="font-size:11px;margin-top:6px">Barras: previsão do modelo (aproximada). “Está a chover” vem das medições das estações do IPMA.</div></div>`}
   // avisos IPMA
   if(D.avisos.length){const cor={yellow:"#f7c300",orange:"#ff8c1a",red:"#e4003a"},niv={yellow:"Amarelo",orange:"Laranja",red:"Vermelho"};
     h+=`<div class="card" style="border-color:${cor[D.avisos.some(a=>a.awarenessLevelID==="red")?"red":D.avisos.some(a=>a.awarenessLevelID==="orange")?"orange":"yellow"]}"><div class="lbl">⚠️ Avisos do IPMA · distrito de ${esc(D.ip.nome)}</div>${D.avisos.sort((a,b)=>new Date(a.startTime)-new Date(b.startTime)).map(a=>`<div class="row"><span style="width:12px;height:12px;border-radius:50%;background:${cor[a.awarenessLevelID]||"#999"};flex:none"></span><span class="m"><b>${esc(a.awarenessTypeName)}</b> · ${niv[a.awarenessLevelID]||esc(a.awarenessLevelID)}<small>${new Date(a.startTime).toLocaleString("pt-PT",{weekday:"short",hour:"2-digit",minute:"2-digit"})} → ${new Date(a.endTime).toLocaleString("pt-PT",{weekday:"short",hour:"2-digit",minute:"2-digit"})}${a.text?" · "+esc(a.text):""}</small></span></div>`).join("")}</div>`}
@@ -1090,23 +1118,23 @@ function tempoPintar(){
       ["💨 Vento",`${Math.round(c.wind_speed_10m)} km/h ${rumo(c.wind_direction_10m||0)}`],["🌬️ Rajadas",`${Math.round(c.wind_gusts_10m)} km/h`],
       ["💧 Humidade",`${Math.round(c.relative_humidity_2m)}%`],["☀️ UV máx.",`${Math.round(Dd.uv_index_max[0]||0)}`],
       ["🌅 Nascer do sol",Dd.sunrise[0].slice(11,16)],["🌇 Pôr do sol",Dd.sunset[0].slice(11,16)]].map(([k,v])=>`<div><div class="sub" style="font-size:12px">${k}</div><div style="font-weight:700;font-size:17px">${v}</div></div>`).join("")}</div>`;
-  h+=`<div class="sub" style="font-size:11px;margin:0 2px 8px;line-height:1.5">Fontes: IPMA (previsão oficial e avisos) · Open-Meteo (modelos Météo-France AROME, ECMWF e outros; chuva de 15 em 15 min). Atualiza sozinho a cada 10 min.</div>`;
+  h+=`<div class="sub" style="font-size:11px;margin:0 2px 8px;line-height:1.5">Fontes: IPMA (previsão oficial e avisos) · IPMA (chuva medida nas estações, de hora a hora) · Open-Meteo (modelos Météo-France, ECMWF e outros). Atualiza sozinho a cada 10 min.</div>`;
   el.innerHTML=h;
 }
 // --- aviso de chuva em todos os separadores
 const CHUVA={t:0,estado:null,fechado:ls.get("tp_chuvaoff",null)};
 async function chuvaVerificar(force){
   if(!gps.pos||(!force&&Date.now()-CHUVA.t<10*60e3))return;CHUVA.t=Date.now();
-  try{const[la,lo]=gps.pos;const om=await getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${la.toFixed(2)}&longitude=${lo.toFixed(2)}&current=precipitation,weather_code&minutely_15=precipitation,weather_code&forecast_minutely_15=6&past_minutely_15=1&timezone=Europe%2FLisbon`,10000);chuvaAtualizar(om)}catch(e){}
+  try{const[la,lo]=gps.pos;const[om,obs]=await Promise.all([getJSON(`https://api.open-meteo.com/v1/forecast?latitude=${la.toFixed(2)}&longitude=${lo.toFixed(2)}&current=precipitation,weather_code&minutely_15=precipitation,weather_code&hourly=precipitation_probability&forecast_hours=3&forecast_minutely_15=6&past_minutely_15=1&timezone=Europe%2FLisbon`,10000),chuvaObservada(gps.pos)]);chuvaAtualizar(om,obs)}catch(e){}
 }
-function chuvaAtualizar(om){const ch=chuvaProxima(om);CHUVA.estado=ch;CHUVA.t=Date.now();chuvaFaixa()}
+function chuvaAtualizar(om,obs){const ch=chuvaProxima(om,obs);CHUVA.estado=ch;CHUVA.t=Date.now();chuvaFaixa()}
 function chuvaFaixa(){
   const el=document.getElementById("chuva");if(!el)return;const ch=CHUVA.estado;
   if(!ch||(!ch.ja&&ch.em==null)){el.innerHTML="";return}
   const chave=ch.ja?"ja":"em";if(CHUVA.fechado&&CHUVA.fechado.k===chave&&Date.now()-CHUVA.fechado.t<90*60e3){el.innerHTML="";return}
-  const txt=ch.ja?"Está a chover aqui"+(ch.total>=0.1?" · deve continuar na próxima hora":""):ch.em<=5?"Vai começar a chover aqui dentro de minutos":`Vai chover aqui dentro de ~${ch.em} min`;
+  const txt=ch.ja?"Está a chover aqui"+((ch.total>=0.1||(ch.prob||0)>=50)?" · deve continuar na próxima hora":""):ch.total<0.1?`Chuva provável na próxima hora (${ch.prob}%)`:ch.em<=5?"Vai começar a chover aqui dentro de minutos":`Vai chover aqui dentro de ~${ch.em} min`;
   el.innerHTML=`<div class="card tap" id="chuvaIr" style="display:flex;align-items:center;gap:10px;padding:10px 12px;background:linear-gradient(90deg,#1e3a5f,#25507f);border-color:#3b82c4;color:#fff">
-    <span style="width:46px;flex:none">${cena(ch.ja?"chuva":"aguaceiros",true)}</span><span style="flex:1"><b>🌧️ ${txt}</b><div style="font-size:12px;opacity:.85">${ch.total>=0.1?"cerca de "+ch.total.toFixed(1).replace(".",",")+" mm na próxima hora · ":""}toca para ver o tempo</div></span>
+    <span style="width:46px;flex:none">${cena(ch.ja?"chuva":"aguaceiros",true)}</span><span style="flex:1"><b>🌧️ ${txt}</b><div style="font-size:12px;opacity:.85">${ch.obs&&ch.obs.chove?"medido na estação IPMA de "+esc(ch.obs.estacao)+" · ":ch.total>=0.1?"cerca de "+ch.total.toFixed(1).replace(".",",")+" mm na próxima hora · ":""}toca para ver o tempo</div></span>
     <button id="chuvaX" aria-label="Fechar" style="background:none;border:0;color:#fff;font-size:20px;padding:4px 6px;cursor:pointer">✕</button></div>`;
   $("#chuvaX").onclick=e=>{e.stopPropagation();CHUVA.fechado={k:chave,t:Date.now()};ls.set("tp_chuvaoff",CHUVA.fechado);el.innerHTML=""};
   $("#chuvaIr").onclick=()=>{state.board=null;state.tab="tempo";TEMPO.lugar=null;ls.set("tp_tab","tempo");render();window.scrollTo(0,0)};
