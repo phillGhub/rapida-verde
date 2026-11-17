@@ -1001,7 +1001,7 @@ async function ipmaLocais(){if(IPMA_LOC)return IPMA_LOC;const c=ls.get("tp_ipmal
 async function ipmaTipos(){if(IPMA_TIPOS)return IPMA_TIPOS;const c=ls.get("tp_ipmatipos",null);if(c&&Date.now()-c.t<30*864e5){IPMA_TIPOS=c.m;return IPMA_TIPOS}
   const j=await ipma("/open-data/weather-type-classe.json");IPMA_TIPOS={};(j.data||[]).forEach(x=>IPMA_TIPOS[x.idWeatherType]=x.descWeatherTypePT);ls.set("tp_ipmatipos",{t:Date.now(),m:IPMA_TIPOS});return IPMA_TIPOS}
 async function ipmaAvisos(){if(Date.now()-avisosCache.t<10*60e3)return avisosCache.L;const j=await ipma("/open-data/forecast/warnings/warnings_www.json");avisosCache.L=Array.isArray(j)?j:(j.data||[]);avisosCache.t=Date.now();return avisosCache.L}
-const omURL=(lat,lon)=>`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,is_day&minutely_15=precipitation,weather_code&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset,uv_index_max&timezone=Europe%2FLisbon&forecast_days=7&forecast_minutely_15=8&past_minutely_15=1`;
+const omURL=(lat,lon)=>`https://api.open-meteo.com/v1/forecast?latitude=${lat.toFixed(3)}&longitude=${lon.toFixed(3)}&current=temperature_2m,apparent_temperature,relative_humidity_2m,precipitation,weather_code,wind_speed_10m,wind_gusts_10m,wind_direction_10m,is_day&minutely_15=precipitation,weather_code&hourly=temperature_2m,precipitation_probability,precipitation,weather_code,is_day,wind_speed_10m,wind_direction_10m,wind_gusts_10m&daily=weather_code,temperature_2m_max,temperature_2m_min,precipitation_probability_max,precipitation_sum,sunrise,sunset,uv_index_max&timezone=Europe%2FLisbon&forecast_days=7&forecast_minutely_15=8&past_minutely_15=1`;
 const nomeCache={};
 async function nomeDoSitio(lat,lon){const k=lat.toFixed(2)+","+lon.toFixed(2);if(nomeCache[k])return nomeCache[k];
   try{const j=await getJSON(`https://nominatim.openstreetmap.org/reverse?format=json&zoom=10&accept-language=pt&lat=${lat.toFixed(2)}&lon=${lon.toFixed(2)}`,8000);
@@ -1080,6 +1080,12 @@ async function tempoCarregar(force){
   TEMPO.busy=false;tempoPintar();
 }
 const DIAS=["Dom","Seg","Ter","Qua","Qui","Sex","Sáb"];
+// Vento: seta a apontar para onde o vento vai, cor pela força
+function ventoHTML(vel,dir,raj,grande){
+  if(vel==null)return"";const v=Math.round(vel),r=raj!=null?Math.round(raj):null;
+  const cor=v>=40||(r||0)>=60?"var(--red)":v>=20||(r||0)>=40?"var(--warn)":(grande?"#fff":"var(--mut)"),sz=grande?16:13;
+  return `<div style="display:flex;align-items:center;justify-content:center;gap:3px;color:${cor};font-size:${grande?13:11}px;font-weight:600"><svg viewBox="0 0 24 24" style="width:${sz}px;height:${sz}px;display:inline-block;transform:rotate(${((dir||0)+180)%360}deg);flex:none"><path d="M12 3 L18 15 L12 12 L6 15 Z" fill="currentColor"/></svg><span style="white-space:nowrap">${v}${grande?" km/h":""}${grande&&r!=null&&r>=v+10?` · rajadas ${r}`:""}</span></div>`;
+}
 const rumo=g=>["N","NE","E","SE","S","SO","O","NO"][Math.round(((g%360)+360)%360/45)%8];
 function tempoPintar(){
   const el=$("#tw"),D=TEMPO.dados;if(!el||!D)return;const om=D.om,c=om.current||{};
@@ -1088,24 +1094,35 @@ function tempoPintar(){
   const ceu=dia?(CEU[tipo]||CEU.nuvens):NOITE;
   let h=`<div class="card" style="background:linear-gradient(160deg,${ceu[0]},${ceu[1]});border:0;position:relative;overflow:hidden;color:#fff">
     <div style="display:flex;align-items:center;gap:6px"><div style="width:52%;max-width:220px;margin:-6px 0 -10px -8px">${cena(tipo,dia)}</div>
-      <div style="flex:1;text-align:right"><div style="font-size:52px;font-weight:800;line-height:1">${Math.round(c.temperature_2m)}°</div><div style="font-weight:700;font-size:16px">${esc(desc)}</div><div style="font-size:13px;opacity:.85">Sensação ${Math.round(c.apparent_temperature)}°</div></div></div>
+      <div style="flex:1;text-align:right"><div style="font-size:52px;font-weight:800;line-height:1">${Math.round(c.temperature_2m)}°</div><div style="font-weight:700;font-size:16px">${esc(desc)}</div><div style="font-size:13px;opacity:.85">Sensação ${Math.round(c.apparent_temperature)}°</div><div style="display:flex;justify-content:flex-end;margin-top:6px">${ventoHTML(c.wind_speed_10m,c.wind_direction_10m,c.wind_gusts_10m,true)}</div></div></div>
     ${ob?`<div style="margin-top:8px;font-size:13px;background:rgba(0,0,0,.18);border-radius:10px;padding:6px 9px">${ob.chove?"🌧️ <b>Está a chover</b>":"🌂 Sem chuva"} medido na estação IPMA de ${esc(ob.estacao)} (${dist(ob.d)}): ${ob.mm.toFixed(1).replace(".",",")} mm na última hora · ${ob.mm6.toFixed(1).replace(".",",")} mm nas últimas 6 h${ob.horasAtras>=1?` · dados de há ${ob.horasAtras} h`:""}</div>`:""}
     <div style="font-size:15px;font-weight:700;margin-top:6px">${esc(D.nome)}</div><div style="font-size:12px;opacity:.8">${esc(D.sub||"")} · atualizado às ${hm(new Date(D.t))}</div></div>`;
-  // chuva na próxima hora
+  // próximas horas: estado por hora (boneco, chuva, vento)
   const ch=chuvaProxima(om,D.obs);
-  if(ch){const max=Math.max(0.5,...ch.pts.map(p=>p.mm));
-    const msg=ch.ja?((ch.total>=0.1||(ch.prob||0)>=50)?"Está a chover · deve continuar na próxima hora":"Está a chover · pode parar em breve"):ch.em!=null?(ch.total>=0.1?`Vai chover dentro de ~${ch.em} min`:`Chuva provável na próxima hora (${ch.prob}%)`):(ch.prob!=null&&ch.prob>=40?`Possível chuva na próxima hora (${ch.prob}%)`:"Sem chuva prevista na próxima hora");
-    h+=`<div class="card"><div class="lbl">☔ Próximas 2 horas</div><div style="font-weight:700;margin:4px 0 8px;color:${ch.ja||ch.em!=null?"#7cc4ff":"var(--g)"}">${msg}</div>
-      <div style="display:flex;align-items:flex-end;gap:5px;height:54px">${ch.pts.map(p=>`<div style="flex:1;display:flex;flex-direction:column;align-items:center;justify-content:flex-end;height:100%"><div style="width:100%;border-radius:4px 4px 0 0;background:${p.mm>0?"#4aa3ff":"var(--line)"};height:${p.mm>0?Math.max(8,p.mm/max*100):4}%"></div></div>`).join("")}</div>
-      <div style="display:flex;gap:5px;margin-top:3px">${ch.pts.map(p=>`<div class="sub" style="flex:1;text-align:center;font-size:10px">${hm(new Date(p.t))}</div>`).join("")}</div>
-      <div class="sub" style="font-size:11px;margin-top:6px">Barras: previsão do modelo (aproximada). “Está a chover” vem das medições das estações do IPMA.</div></div>`}
+  if(ch){const H0=om.hourly;
+    const msg=ch.ja?((ch.total>=0.1||(ch.prob||0)>=50)?"Está a chover · deve continuar":"Está a chover · pode parar em breve"):ch.em!=null?(ch.total>=0.1?`Vai chover dentro de ~${ch.em} min`:`Chuva provável na próxima hora (${ch.prob}%)`):(ch.prob!=null&&ch.prob>=40?`Possível chuva na próxima hora (${ch.prob}%)`:"Sem chuva prevista na próxima hora");
+    let horas="";
+    if(H0){const agora=Date.now();let i0=H0.time.findIndex(t=>new Date(t).getTime()+3600e3>agora);if(i0<0)i0=0;
+      horas=`<div style="display:flex;gap:6px;margin-top:10px">${[0,1,2,3].map(j=>{const i=i0+j;if(i>=H0.time.length)return"";
+        let[ds,tp]=wmo(H0.weather_code[i]);if(j===0&&D.obs&&D.obs.chove&&!/chuv|aguac|trovo|neve/.test(tp))tp="chuva";
+        const pr=H0.precipitation_probability[i],mm=H0.precipitation[i];
+        return `<div style="flex:1;text-align:center;background:var(--bg);border-radius:12px;padding:8px 2px">
+          <div class="sub" style="font-size:12px;font-weight:700">${j===0?"Agora":String(new Date(H0.time[i]).getHours()).padStart(2,"0")+"h"}</div>
+          <div style="width:58px;margin:0 auto">${cena(tp,H0.is_day[i]!==0,true)}</div>
+          <div style="font-weight:800;font-size:17px">${Math.round(H0.temperature_2m[i])}°</div>
+          <div style="font-size:13px;font-weight:700;color:${pr>=60?"#4aa3ff":pr>=30?"#7cc4ff":"var(--mut)"}">💧 ${pr!=null?pr:0}%</div>
+          <div class="sub" style="font-size:10px;min-height:13px">${mm>=0.1?mm.toFixed(1).replace(".",",")+" mm":""}</div>
+          ${ventoHTML(H0.wind_speed_10m&&H0.wind_speed_10m[i],H0.wind_direction_10m&&H0.wind_direction_10m[i],H0.wind_gusts_10m&&H0.wind_gusts_10m[i],false)}
+        </div>`}).join("")}</div>`}
+    h+=`<div class="card"><div class="lbl">☔ Próximas horas</div><div style="font-weight:700;margin:4px 0 0;color:${ch.ja||ch.em!=null?"#7cc4ff":"var(--g)"}">${msg}</div>${horas}
+      <div class="sub" style="font-size:11px;margin-top:8px">💧 probabilidade de chuva · seta = para onde sopra o vento (km/h)${D.obs?" · “Está a chover” vem das estações do IPMA":""}</div></div>`}
   // avisos IPMA
   if(D.avisos.length){const cor={yellow:"#f7c300",orange:"#ff8c1a",red:"#e4003a"},niv={yellow:"Amarelo",orange:"Laranja",red:"Vermelho"};
     h+=`<div class="card" style="border-color:${cor[D.avisos.some(a=>a.awarenessLevelID==="red")?"red":D.avisos.some(a=>a.awarenessLevelID==="orange")?"orange":"yellow"]}"><div class="lbl">⚠️ Avisos do IPMA · distrito de ${esc(D.ip.nome)}</div>${D.avisos.sort((a,b)=>new Date(a.startTime)-new Date(b.startTime)).map(a=>`<div class="row"><span style="width:12px;height:12px;border-radius:50%;background:${cor[a.awarenessLevelID]||"#999"};flex:none"></span><span class="m"><b>${esc(a.awarenessTypeName)}</b> · ${niv[a.awarenessLevelID]||esc(a.awarenessLevelID)}<small>${new Date(a.startTime).toLocaleString("pt-PT",{weekday:"short",hour:"2-digit",minute:"2-digit"})} → ${new Date(a.endTime).toLocaleString("pt-PT",{weekday:"short",hour:"2-digit",minute:"2-digit"})}${a.text?" · "+esc(a.text):""}</small></span></div>`).join("")}</div>`}
   // por hora
   const H=om.hourly;if(H){const agora=Date.now();let i0=H.time.findIndex(t=>new Date(t).getTime()+3600e3>agora);if(i0<0)i0=0;
     h+=`<div class="card"><div class="lbl">Próximas 24 horas</div><div style="display:flex;gap:4px;overflow-x:auto;margin-top:8px;padding-bottom:4px">${H.time.slice(i0,i0+24).map((t,j)=>{const i=i0+j,[,tp]=wmo(H.weather_code[i]);
-      return `<div style="flex:none;width:52px;text-align:center"><div class="sub" style="font-size:11px">${j===0?"Agora":String(new Date(t).getHours()).padStart(2,"0")+"h"}</div><div style="width:44px;margin:0 auto">${cena(tp,H.is_day[i]!==0,false)}</div><div style="font-weight:700">${Math.round(H.temperature_2m[i])}°</div><div style="font-size:11px;color:${H.precipitation_probability[i]>=40?"#7cc4ff":"var(--mut)"}">${H.precipitation_probability[i]!=null?H.precipitation_probability[i]+"%":""}</div></div>`}).join("")}</div></div>`}
+      return `<div style="flex:none;width:52px;text-align:center"><div class="sub" style="font-size:11px">${j===0?"Agora":String(new Date(t).getHours()).padStart(2,"0")+"h"}</div><div style="width:44px;margin:0 auto">${cena(tp,H.is_day[i]!==0,false)}</div><div style="font-weight:700">${Math.round(H.temperature_2m[i])}°</div><div style="font-size:11px;color:${H.precipitation_probability[i]>=40?"#7cc4ff":"var(--mut)"}">${H.precipitation_probability[i]!=null?H.precipitation_probability[i]+"%":""}</div>${ventoHTML(H.wind_speed_10m&&H.wind_speed_10m[i],H.wind_direction_10m&&H.wind_direction_10m[i],null,false)}</div>`}).join("")}</div></div>`}
   // 7 dias
   const Dd=om.daily;if(Dd){const mn=Math.min(...Dd.temperature_2m_min),mx=Math.max(...Dd.temperature_2m_max);
     h+=`<div class="card"><div class="lbl">Próximos 7 dias</div>${Dd.time.map((t,i)=>{const[ds,tp]=wmo(Dd.weather_code[i]),d=new Date(t+"T12:00");const a=(Dd.temperature_2m_min[i]-mn)/(mx-mn||1)*100,b=(Dd.temperature_2m_max[i]-mn)/(mx-mn||1)*100;
