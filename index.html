@@ -82,6 +82,12 @@ svg{display:block;width:100%;height:auto}
 @keyframes wxflash{0%,88%,100%{opacity:0}90%,94%{opacity:1}}
 @keyframes wxfog{from{transform:translateX(-10px)}to{transform:translateX(10px)}}
 @media (prefers-reduced-motion:reduce){[class^="wx-"],[class*=" wx-"]{animation:none!important}}
+.chega{animation:piscaAm 1s ease-in-out infinite;border-radius:10px;margin:0 -6px;padding-left:10px!important;padding-right:10px!important}
+.chega .in{color:#f7c300!important}
+@keyframes piscaAm{0%,100%{background:transparent}50%{background:rgba(247,195,0,.3)}}
+.tremChega circle{animation:piscaTrem .8s steps(1) infinite}
+@keyframes piscaTrem{50%{fill:#ffe600;stroke:#ffe600}}
+@media (prefers-reduced-motion:reduce){.chega{animation:none;background:rgba(247,195,0,.25)}.tremChega circle{animation:none;fill:#ffe600}}
 footer{font-size:11px;color:var(--mut);text-align:center;margin-top:16px;line-height:1.5}
 </style>
 </head>
@@ -240,11 +246,14 @@ function estadoHTML(linhas){
 }
 function metroGruposHTML(b,max=3,compact=false){
   if(!b.grupos.length)return `<div class="empty">Sem comboios previstos${b.aviso?" ("+esc(b.aviso)+")":""}.</div>`;
-  return b.grupos.map(g=>{const L=LINHAS[g.linha]||{cor:"#888",nome:g.linha};const nowM=nowMin();
-    const via=g.dest.filter(d=>d!==g.term);
-    return `<div class="row"><span class="dot" style="background:${L.cor};color:${g.linha==="amarela"?"#1a1500":"#fff"}">${(L.nome||"?")[0]}</span>
+  const el=b.t?Math.max(0,(Date.now()-b.t)/60000):0;
+  const G=b.grupos.map(g=>({...g,m:g.m.map(x=>x-el).filter(x=>x>-0.3).map(x=>Math.max(0,x))})).filter(g=>g.m.length);
+  if(!G.length)return `<div class="empty">A atualizar…</div>`;
+  return G.map(g=>{const L=LINHAS[g.linha]||{cor:"#888",nome:g.linha};const nowM=nowMin();
+    const via=g.dest.filter(d=>d!==g.term),chega=g.m[0]<=1;
+    return `<div class="row${chega?" chega":""}"><span class="dot" style="background:${L.cor};color:${g.linha==="amarela"?"#1a1500":"#fff"}">${(L.nome||"?")[0]}</span>
       <span class="m">→ <b>${esc(g.term)}</b>${via.length?`<small>alguns terminam em ${esc(via.join(", "))}</small>`:compact?"":`<small>Linha ${esc(L.nome)}</small>`}</span>
-      <span class="in">${em(g.m[0])}<small>${g.m.slice(0,max).map(m=>fmtMin(nowM+m)).join(" · ")}</small></span></div>`}).join("");
+      <span class="in">${chega?"🟡 ":""}${em(g.m[0])}<small>${g.m.slice(0,max).map(m=>fmtMin(nowM+m)).join(" · ")}</small></span></div>`}).join("");
 }
 
 
@@ -321,18 +330,20 @@ async function loadLine(l){
     j.estacoes.forEach(e=>{const k=L.est.findIndex(p=>p[0]===e.id);if(k<0)return;
       e.cais.filter(c=>c.linha===l).forEach(c=>{const iD=L.est.findIndex(p=>norm(p[1])===norm(c.destino));if(iD<0||iD===k)return;const dir=iD>k?"S":"N";
         c.comboios.forEach(tr=>{const key=tr.id+dir;if(!best[key]||tr.s<best[key].s)best[key]={id:tr.id,dir,k,s:tr.s,dest:c.destino}})})});
-    lineData={l,best,t:Date.now()};placeTrains();
+    lineData={l,best,t:Date.now(),aqui:estacaoAqui(l)};placeTrains();
     const el=$("#lineInfo");if(el)el.textContent=`${Object.keys(best).length} comboios na linha · posições estimadas pelos tempos de espera · ${hm(new Date())}`;
   }catch(e){const el=$("#lineInfo");if(el)el.textContent="Sem dados da linha ("+e.message+")"}
 }
+function estacaoAqui(l){if(!gps.pos)return null;const c=LINHAS[l].est.map(([id])=>EST[id]).filter(e=>e&&e.lat).map(e=>({e,d:hav(gps.pos,[e.lat,e.lon])})).sort((a,b)=>a.d-b.d)[0];return c&&c.d<0.8?c.e.id:null}
 function placeTrains(){
   if(!lineData||!$("#trains"))return;const L=LINHAS[lineData.l],n=L.est.length,el0=(Date.now()-lineData.t)/1000,g=$("#trains"),seen=new Set();
+  const aqui=lineData.aqui!=null?L.est.findIndex(p=>p[0]===lineData.aqui):-1;
   Object.values(lineData.best).forEach(b=>{const s=Math.max(0,b.s-el0);
     let pos=b.dir==="S"?b.k-Math.min(s/SEGS,1.6):b.k+Math.min(s/SEGS,1.6);pos=Math.max(-0.4,Math.min(n-0.6,pos));
     const x=b.dir==="S"?XS:XN,y=LY0+pos*LDY,key=b.id+b.dir;seen.add(key);let e=trainEls[key];
     if(!e){e=document.createElementNS("http://www.w3.org/2000/svg","g");e.innerHTML=`<circle r="9" fill="${L.cor}" stroke="#0f1512" stroke-width="2"/><text y="4" text-anchor="middle" font-size="10" font-weight="800" fill="${lineData.l==="amarela"?"#1a1500":"#fff"}">${b.dir==="S"?"↓":"↑"}</text>`;
       e.style.transition="transform 2s linear";g.appendChild(e);trainEls[key]=e}
-    e.style.transform=`translate(${x}px,${y}px)`});
+    e.style.transform=`translate(${x}px,${y}px)`;e.classList.toggle("tremChega",aqui>=0&&b.k===aqui&&s<=75)});
   Object.keys(trainEls).forEach(k=>{if(!seen.has(k)){trainEls[k].remove();delete trainEls[k]}});
 }
 function stopLine(){clearInterval(lineTimer);lineTimer=null}
@@ -610,8 +621,6 @@ function guardarQuadro(k,b){if(!b||b.err||b.closed||!/^(metro|cp):/.test(k))retu
   try{const o=ls.get("tp_bc",{})||{};o[k]={...b,L:b.L?b.L.map(r=>{const{stops,...x}=r;return x}):undefined};
     const ks=Object.keys(o);if(ks.length>25)ks.sort((a,b)=>o[a].t-o[b].t).slice(0,ks.length-25).forEach(x=>delete o[x]);ls.set("tp_bc",o)}catch(e){}}
 function quadroGuardado(f){const o=ls.get("tp_bc",{})||{},b=o[favKey(f)];if(!b||Date.now()-b.t>15*60e3)return null;
-  if(f.tipo==="metro"){const el=(Date.now()-b.t)/60000;   // os minutos do metro são relativos: desconta o tempo que passou
-    return{...b,velho:true,grupos:(b.grupos||[]).map(g=>({...g,m:g.m.map(x=>x-el).filter(x=>x>=0),tr:(g.tr||[]).map(t=>({...t,m:t.m-el})).filter(t=>t.m>=0)})).filter(g=>g.m.length)}}
   return{...b,velho:true}}
 function rdoHTML(f,max){
   const[lid,sent]=f.id.split(":");const L=RDO.find(x=>x.id===lid);if(!L)return"";const S=svcDay();
@@ -746,7 +755,8 @@ function vPerto(){
   const all=[...fl,...near.map(x=>x[0])];
   const go=()=>all.forEach(f=>fillCard(f,f.tipo==="cp"?4:3));
   rvMotor();rvCartao();paintGps();$("#gpsPill").onclick=()=>{const blq=gps.code===1;startGPS();if(blq){const hp=$("#gpsHelp");hp.style.display=hp.style.display==="none"?"":"none"}};
-  let tk=0;go();timer=setInterval(()=>{if(document.hidden)return;paintGps();rvMotor();rvCartao();if(++tk%4===0){$("#clock").textContent=hm(new Date());go();procurarComboiosPerto().then(m=>{if(m&&state.tab==="perto"&&!state.board)render()})}},5e3);
+  let tk=0;go();timer=setInterval(()=>{if(document.hidden)return;paintGps();rvMotor();rvCartao();
+    all.filter(f=>f.tipo==="metro").forEach(f=>{const c=cache[favKey(f)],el=document.getElementById("c_"+favKey(f).replace(/[^a-zA-Z0-9]/g,"_"));if(c&&!c.err&&el)el.querySelector(".cb").innerHTML=bodyHTML(f,c,3)});if(++tk%4===0){$("#clock").textContent=hm(new Date());go();procurarComboiosPerto().then(m=>{if(m&&state.tab==="perto"&&!state.board)render()})}},5e3);
   if(!CLS&&gps.pos)loadCL().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
   if(!CM&&gps.pos)loadCM().then(()=>{if(state.tab==="perto"&&!state.board)render()}).catch(()=>{});
   procurarComboiosPerto().then(mudou=>{if(mudou&&state.tab==="perto"&&!state.board)render()});
@@ -774,7 +784,7 @@ function vMetro(){
 function openLine(force){
   const box=$("#lineBox"),tog=$("#lineTog");if(!box)return;const l=state.mLinha;
   box.style.display=state.lineOpen?"":"none";tog.textContent=state.lineOpen?"Fechar mapa":"🗺️ Ver a Linha "+LINHAS[l].nome+" ao vivo";stopLine();
-  if(state.lineOpen){drawLine(l,null);let tick=0;loadLine(l);lineTimer=setInterval(()=>{if(document.hidden)return;tick=(tick+1)%5;if(tick===0)loadLine(l);else placeTrains()},2e3)}
+  if(state.lineOpen){drawLine(l,estacaoAqui(l));let tick=0;loadLine(l);lineTimer=setInterval(()=>{if(document.hidden)return;tick=(tick+1)%5;if(tick===0)loadLine(l);else placeTrains()},2e3)}
 }
 
 // ---- Comboios
@@ -1189,6 +1199,7 @@ function renderBoard(){
   window.__repaint=b=>{if(state.board===f&&cache[favKey(f)]===b)paint(b)};
   {const c0=cache[favKey(f)]||quadroGuardado(f);if(c0&&!c0.err)paint(c0),$("#upd").textContent="A atualizar…"}
   const load=async(force)=>{if(force)delete cache[favKey(f)];let b;try{b=await board(f)}catch(e){b={err:e.message+(f.tipo==="cl"?" — corre o processo “Dados Carris” no GitHub (Actions)":f.tipo!=="metro"?" — confirma que o Worker está atualizado":"")}}if(state.board===f)paint(b)};
+  if(f.tipo==="metro"){let tk=0;load();timer=setInterval(()=>{if(document.hidden)return;if(++tk%3===0)load(true);else{const c=cache[favKey(f)];if(c&&!c.err)$("#bb").innerHTML=bodyHTML(f,c,6)}},5e3);return}
   load();timer=setInterval(()=>{if(!document.hidden)load(true)},f.tipo==="cp"?45e3:(f.tipo==="cl"||f.tipo==="rd")?60e3:20e3);
 }
 
