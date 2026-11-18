@@ -2,7 +2,7 @@
 <html lang="pt-PT">
 <head>
 <meta charset="utf-8">
-<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.workers.dev https://api.carrismetropolitana.pt https://raw.githubusercontent.com https://api.tomtom.com https://overpass-api.de https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.ipma.pt https://nominatim.openstreetmap.org; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
+<meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self' https://*.workers.dev https://api.carrismetropolitana.pt https://raw.githubusercontent.com https://api.tomtom.com https://overpass-api.de https://overpass.private.coffee https://api.open-meteo.com https://geocoding-api.open-meteo.com https://api.ipma.pt https://nominatim.openstreetmap.org; worker-src 'self'; manifest-src 'self'; object-src 'none'; base-uri 'none'; form-action 'none'">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="mobile-web-app-capable" content="yes">
@@ -668,26 +668,38 @@ function render(){
 // ---- Perto
 // ---- Estações de comboio perto (posições do OpenStreetMap, horários da IP)
 const NEARCP={pos:null,t:0,L:[],busy:false};
+// limpa o nome do OpenStreetMap para procurar na IP ("Estação Ferroviária de Entrecampos" → "Entrecampos")
+const limpaEstacao=n=>String(n||"").replace(/^(esta[cç][aã]o|apeadeiro)(\s+(ferrovi[aá]ria|de\s+comboios|da\s+cp))?(\s+(de|do|da|dos|das))?\s+/i,"").replace(/\s*\((cp|fertagus)\)\s*$/i,"").trim();
+const OVERPASS=["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter"];
 async function procurarComboiosPerto(){
   if(!gps.pos||NEARCP.busy)return false;
   if(NEARCP.pos&&hav(NEARCP.pos,gps.pos)<0.3&&Date.now()-NEARCP.t<15*60e3)return false;
-  NEARCP.busy=true;
+  NEARCP.busy=true;NEARCP.estado="procura";
   try{
     // privacidade: ao mapa só vai a posição arredondada (~100 m)
     const la=Math.round(gps.pos[0]*1000)/1000,lo=Math.round(gps.pos[1]*1000)/1000;
-    const q=`[out:json][timeout:15];(node(around:1500,${la},${lo})[railway~"^(station|halt)$"];);out body;`;
-    const j=await getJSON("https://overpass-api.de/api/interpreter?data="+encodeURIComponent(q),20000);
-    const els=(j.elements||[]).filter(e=>e.tags&&e.tags.name&&e.tags.station!=="subway"&&e.tags.subway!=="yes"&&e.tags.station!=="light_rail"&&!/metro/i.test(e.tags.network||""));
-    const mapa=ls.get("tp_osm2ip",{})||{};const L=[];
-    for(const e of els.map(e=>({e,d:hav(gps.pos,[e.lat,e.lon])})).sort((a,b)=>a.d-b.d).slice(0,2)){
+    // estações desenhadas como ponto ou como área; comboio (não metro nem elétrico)
+    const q=`[out:json][timeout:20];(nwr(around:2500,${la},${lo})[railway~"^(station|halt)$"];nwr(around:2500,${la},${lo})[public_transport=station][train=yes];);out center tags;`;
+    let j=null,erro=null;
+    for(const srv of OVERPASS){try{j=await getJSON(srv+"?data="+encodeURIComponent(q),20000);break}catch(e){erro=e}}
+    if(!j)throw erro||new Error("mapa indisponível");
+    const vistos=new Set();
+    const els=(j.elements||[]).map(e=>({...e,lat:e.lat??(e.center&&e.center.lat),lon:e.lon??(e.center&&e.center.lon)}))
+      .filter(e=>e.tags&&e.tags.name&&e.lat!=null&&e.tags.station!=="subway"&&e.tags.subway!=="yes"&&e.tags.station!=="light_rail"&&e.tags.light_rail!=="yes"&&!/metro/i.test((e.tags.network||"")+" "+(e.tags.operator||"")))
+      .filter(e=>{const k=norm(limpaEstacao(e.tags.name));if(vistos.has(k))return false;vistos.add(k);return true});
+    const mapa=ls.get("tp_osm2ip2",{})||{};const L=[];
+    for(const e of els.map(e=>({e,d:hav(gps.pos,[e.lat,e.lon])})).sort((a,b)=>a.d-b.d).slice(0,3)){
       const nm=e.e.tags.name;let m=mapa[nm];
-      if(!m){try{const R=await cpSearch(nm.replace(/^Estação( de| do| da)? /i,""));
-          const k=norm(nm);m=R.find(r=>norm(r.nome)===k)||R.find(r=>norm(r.nome).includes(k)||k.includes(norm(r.nome)))||R[0]||null;
-          if(m){mapa[nm]={id:m.id,nome:m.nome};ls.set("tp_osm2ip",mapa)}}catch(err){}}
-      if(m)L.push({f:{tipo:"cp",id:m.id,nome:m.nome},d:e.d});
+      if(!m){const nomes=[limpaEstacao(nm),e.e.tags.short_name,e.e.tags.official_name&&limpaEstacao(e.e.tags.official_name)].filter(Boolean);
+        for(const tent of nomes){try{const R=await cpSearch(tent);const k=norm(tent);
+          m=R.find(r=>norm(r.nome)===k)||R.find(r=>norm(r.nome).endsWith(k)||norm(r.nome).includes(k))||R.find(r=>k.includes(norm(r.nome)))||(R.length===1?R[0]:null);
+          if(m){mapa[nm]={id:m.id,nome:m.nome};ls.set("tp_osm2ip2",mapa);break}}catch(err){}}}
+      if(m&&!L.some(x=>x.f.id===m.id))L.push({f:{tipo:"cp",id:m.id,nome:m.nome},d:e.d});
+      if(L.length>=2)break;
     }
-    NEARCP.L=L;NEARCP.pos=gps.pos.slice();NEARCP.t=Date.now();return true;
-  }catch(e){return false}finally{NEARCP.busy=false}
+    NEARCP.L=L;NEARCP.pos=gps.pos.slice();NEARCP.t=Date.now();NEARCP.estado=L.length?"ok":"nenhuma";return true;
+  }catch(e){NEARCP.estado="erro";NEARCP.pos=gps.pos.slice();NEARCP.t=Date.now()-14*60e3;return true}   // volta a tentar daqui a ~1 min
+  finally{NEARCP.busy=false}
 }
 
 
@@ -750,6 +762,8 @@ function vPerto(){
   if(!gps.pos)h+=`<div class="card sub">Sem a tua localização, não consigo mostrar o que está perto. Os favoritos funcionam na mesma.</div>`;
   else if(!near.length)h+=`<div class="card sub">Não há estações de metro ou comboio nem paragens da Carris, Carris Metropolitana ou Rápida Verde aqui perto${CM&&CLS?"":" (a carregar paragens…)"}. Procura nos separadores em baixo.</div>`;
   h+=near.map(([f,s])=>cardShell(f,s)).join("");
+  if(gps.pos&&!NEARCP.L.length){const st={procura:"🚆 A procurar estações de comboio perto de ti…",nenhuma:"🚆 Não há estações de comboio a menos de 2,5 km.",erro:"🚆 O mapa das estações não respondeu; volto a tentar daqui a pouco."}[NEARCP.estado]||"🚆 A procurar estações de comboio perto de ti…";
+    h+=`<div class="sub" style="margin:-4px 4px 12px;font-size:12px">${st}</div>`}
   if(!fl.length)h+=`<div class="card sub">Dica: abre uma estação ou paragem e toca na ⭐ para a teres sempre aqui.</div>`;
   $("#view").innerHTML=h;
   const all=[...fl,...near.map(x=>x[0])];
