@@ -671,34 +671,51 @@ const NEARCP={pos:null,t:0,L:[],busy:false};
 // limpa o nome do OpenStreetMap para procurar na IP ("Estação Ferroviária de Entrecampos" → "Entrecampos")
 const limpaEstacao=n=>String(n||"").replace(/^(esta[cç][aã]o|apeadeiro)(\s+(ferrovi[aá]ria|de\s+comboios|da\s+cp))?(\s+(de|do|da|dos|das))?\s+/i,"").replace(/\s*\((cp|fertagus)\)\s*$/i,"").trim();
 const OVERPASS=["https://overpass-api.de/api/interpreter","https://overpass.private.coffee/api/interpreter"];
+// Lista própria das principais estações (resposta imediata, sem esperar pelo mapa). [nome na IP, lat, lon]
+const EST_CP=[["Lisboa - Santa Apolónia",38.7137,-9.1225],["Lisboa - Oriente",38.7678,-9.0990],["Entrecampos",38.7445,-9.1485],["Roma-Areeiro",38.7448,-9.1340],["Sete Rios",38.7404,-9.1665],["Campolide",38.7337,-9.1702],["Benfica",38.7487,-9.1980],["Alcântara-Terra",38.7066,-9.1730],["Marvila",38.7469,-9.1037],["Braço de Prata",38.7550,-9.1000],["Moscavide",38.7766,-9.1010],["Sacavém",38.7925,-9.1005],["Bobadela",38.8060,-9.0990],["Santa Iria",38.8306,-9.0794],["Póvoa",38.8540,-9.0640],["Alverca",38.8955,-9.0390],["Alhandra",38.9285,-9.0110],["Vila Franca de Xira",38.9555,-8.9900],["Castanheira do Ribatejo",38.9870,-8.9650],["Carregado",39.0190,-8.9600],["Azambuja",39.0700,-8.8670],
+["Lisboa - Rossio",38.7143,-9.1415],["Santa Cruz - Damaia",38.7553,-9.2120],["Reboleira",38.7525,-9.2245],["Amadora",38.7580,-9.2390],["Queluz - Belas",38.7600,-9.2560],["Monte Abraão",38.7615,-9.2700],["Massamá - Barcarena",38.7590,-9.2810],["Agualva - Cacém",38.7680,-9.2970],["Rio de Mouro",38.7750,-9.3310],["Mira Sintra - Meleças",38.7820,-9.3330],["Mercês",38.7820,-9.3470],["Algueirão - Mem Martins",38.7920,-9.3600],["Portela de Sintra",38.7990,-9.3740],["Sintra",38.7990,-9.3850],
+["Cais do Sodré",38.7060,-9.1450],["Santos",38.7055,-9.1560],["Alcântara-Mar",38.7020,-9.1760],["Belém",38.6965,-9.2015],["Algés",38.6990,-9.2310],["Cruz Quebrada",38.6955,-9.2480],["Caxias",38.6970,-9.2700],["Paço de Arcos",38.6930,-9.2920],["Santo Amaro",38.6930,-9.3030],["Oeiras",38.6905,-9.3150],["Carcavelos",38.6840,-9.3360],["Parede",38.6870,-9.3530],["São Pedro do Estoril",38.6960,-9.3700],["São João do Estoril",38.6990,-9.3800],["Estoril",38.7045,-9.3975],["Monte Estoril",38.7050,-9.4090],["Cascais",38.7010,-9.4190],
+["Pragal",38.6714,-9.1615],["Corroios",38.6380,-9.1450],["Foros de Amora",38.6200,-9.1290],["Fogueteiro",38.6090,-9.1190],["Coina",38.5830,-9.0570],["Pinhal Novo",38.6315,-8.9150],["Palmela",38.5560,-8.8930],["Setúbal",38.5290,-8.8840],["Barreiro",38.6585,-9.0780],["Lavradio",38.6670,-9.0530],["Baixa da Banheira",38.6560,-9.0400],["Moita",38.6480,-9.0000],
+["Sabugo",38.8280,-9.2990],["Pedra Furada",38.8650,-9.2800],["Malveira",38.9300,-9.2580],["Torres Vedras",39.0890,-9.2620],["Ramalhal",39.1440,-9.2290],["Outeiro",39.1960,-9.2050],["Bombarral",39.2655,-9.1570],["Óbidos",39.3600,-9.1580],["Caldas da Rainha",39.4045,-9.1365],["São Martinho do Porto",39.5110,-9.1310],["Valado",39.5900,-8.9950],["Leiria",39.7590,-8.8150],["Marinha Grande",39.7480,-8.9300],
+["Santarém",39.2410,-8.6730],["Entroncamento",39.4610,-8.4690],["Coimbra-B",40.2230,-8.4380],["Coimbra",40.2080,-8.4330],["Aveiro",40.6440,-8.6400],["Porto - Campanhã",41.1490,-8.5850],["Porto - São Bento",41.1455,-8.6105],["Braga",41.5480,-8.4340],["Évora",38.5630,-7.9100],["Faro",37.0190,-7.9400],["Tunes",37.1640,-8.2540]];
+// procura a estação na IP (com memória)
+async function cpCasa(nome,extra){
+  const mapa=ls.get("tp_osm2ip2",{})||{};if(mapa[nome])return mapa[nome];
+  for(const tent of [nome,...(extra||[])].filter(Boolean)){try{const R=await cpSearch(tent),k=norm(tent);
+    const m=R.find(r=>norm(r.nome)===k)||R.find(r=>norm(r.nome).endsWith(k)||norm(r.nome).includes(k))||R.find(r=>k.includes(norm(r.nome)))||(R.length===1?R[0]:null);
+    if(m){const M=ls.get("tp_osm2ip2",{})||{};M[nome]={id:m.id,nome:m.nome};ls.set("tp_osm2ip2",M);return M[nome]}}catch(e){}}
+  return null;
+}
+// mapa (OpenStreetMap): os dois servidores ao mesmo tempo, fica o primeiro que responder; guardado por zona durante 7 dias
+async function overpassPerto(la,lo){
+  const zona=(Math.round(la*200)/200)+","+(Math.round(lo*200)/200),C=ls.get("tp_osmzona",{})||{};
+  if(C[zona]&&Date.now()-C[zona].t<7*864e5)return C[zona].L;
+  const q=`[out:json][timeout:10];(nwr(around:2500,${la},${lo})[railway~"^(station|halt)$"];nwr(around:2500,${la},${lo})[public_transport=station][train=yes];);out center tags;`;
+  const j=await Promise.any(OVERPASS.map(s=>getJSON(s+"?data="+encodeURIComponent(q),9000)));
+  const vistos=new Set();
+  const L=(j.elements||[]).map(e=>({...e,lat:e.lat??(e.center&&e.center.lat),lon:e.lon??(e.center&&e.center.lon)}))
+    .filter(e=>e.tags&&e.tags.name&&e.lat!=null&&e.tags.station!=="subway"&&e.tags.subway!=="yes"&&e.tags.station!=="light_rail"&&e.tags.light_rail!=="yes"&&!/metro/i.test((e.tags.network||"")+" "+(e.tags.operator||"")))
+    .filter(e=>{const k=norm(limpaEstacao(e.tags.name));if(vistos.has(k))return false;vistos.add(k);return true})
+    .map(e=>({nome:e.tags.name,extra:[limpaEstacao(e.tags.name),e.tags.short_name,e.tags.official_name&&limpaEstacao(e.tags.official_name)],p:[e.lat,e.lon]}));
+  const C2=ls.get("tp_osmzona",{})||{};C2[zona]={t:Date.now(),L};const ks=Object.keys(C2);if(ks.length>40)delete C2[ks[0]];ls.set("tp_osmzona",C2);
+  return L;
+}
 async function procurarComboiosPerto(){
   if(!gps.pos||NEARCP.busy)return false;
   if(NEARCP.pos&&hav(NEARCP.pos,gps.pos)<0.3&&Date.now()-NEARCP.t<15*60e3)return false;
-  NEARCP.busy=true;NEARCP.estado="procura";
+  NEARCP.busy=true;if(NEARCP.estado!=="ok")NEARCP.estado="procura";
+  const fim=async cand=>{
+    const top=cand.map(c=>({...c,d:hav(gps.pos,c.p)})).filter(c=>c.d<=2.5).sort((a,b)=>a.d-b.d).slice(0,3);
+    const R=await Promise.all(top.map(c=>cpCasa(c.nome,c.extra).then(m=>m&&{f:{tipo:"cp",id:m.id,nome:m.nome},d:c.d})));
+    const L=[];R.forEach(x=>{if(x&&!L.some(y=>y.f.id===x.f.id)&&L.length<2)L.push(x)});return L;
+  };
   try{
-    // privacidade: ao mapa só vai a posição arredondada (~100 m)
-    const la=Math.round(gps.pos[0]*1000)/1000,lo=Math.round(gps.pos[1]*1000)/1000;
-    // estações desenhadas como ponto ou como área; comboio (não metro nem elétrico)
-    const q=`[out:json][timeout:20];(nwr(around:2500,${la},${lo})[railway~"^(station|halt)$"];nwr(around:2500,${la},${lo})[public_transport=station][train=yes];);out center tags;`;
-    let j=null,erro=null;
-    for(const srv of OVERPASS){try{j=await getJSON(srv+"?data="+encodeURIComponent(q),20000);break}catch(e){erro=e}}
-    if(!j)throw erro||new Error("mapa indisponível");
-    const vistos=new Set();
-    const els=(j.elements||[]).map(e=>({...e,lat:e.lat??(e.center&&e.center.lat),lon:e.lon??(e.center&&e.center.lon)}))
-      .filter(e=>e.tags&&e.tags.name&&e.lat!=null&&e.tags.station!=="subway"&&e.tags.subway!=="yes"&&e.tags.station!=="light_rail"&&e.tags.light_rail!=="yes"&&!/metro/i.test((e.tags.network||"")+" "+(e.tags.operator||"")))
-      .filter(e=>{const k=norm(limpaEstacao(e.tags.name));if(vistos.has(k))return false;vistos.add(k);return true});
-    const mapa=ls.get("tp_osm2ip2",{})||{};const L=[];
-    for(const e of els.map(e=>({e,d:hav(gps.pos,[e.lat,e.lon])})).sort((a,b)=>a.d-b.d).slice(0,3)){
-      const nm=e.e.tags.name;let m=mapa[nm];
-      if(!m){const nomes=[limpaEstacao(nm),e.e.tags.short_name,e.e.tags.official_name&&limpaEstacao(e.e.tags.official_name)].filter(Boolean);
-        for(const tent of nomes){try{const R=await cpSearch(tent);const k=norm(tent);
-          m=R.find(r=>norm(r.nome)===k)||R.find(r=>norm(r.nome).endsWith(k)||norm(r.nome).includes(k))||R.find(r=>k.includes(norm(r.nome)))||(R.length===1?R[0]:null);
-          if(m){mapa[nm]={id:m.id,nome:m.nome};ls.set("tp_osm2ip2",mapa);break}}catch(err){}}}
-      if(m&&!L.some(x=>x.f.id===m.id))L.push({f:{tipo:"cp",id:m.id,nome:m.nome},d:e.d});
-      if(L.length>=2)break;
-    }
+    // 1) lista própria: instantâneo
+    let L=await fim(EST_CP.map(([nome,la,lo])=>({nome,p:[la,lo]})));
+    // 2) só se não houver nenhuma conhecida perto, pergunta ao mapa (apeadeiros, etc.) — posição arredondada (~100 m)
+    if(!L.length){const la=Math.round(gps.pos[0]*1000)/1000,lo=Math.round(gps.pos[1]*1000)/1000;L=await fim(await overpassPerto(la,lo))}
     NEARCP.L=L;NEARCP.pos=gps.pos.slice();NEARCP.t=Date.now();NEARCP.estado=L.length?"ok":"nenhuma";return true;
-  }catch(e){NEARCP.estado="erro";NEARCP.pos=gps.pos.slice();NEARCP.t=Date.now()-14*60e3;return true}   // volta a tentar daqui a ~1 min
+  }catch(e){NEARCP.estado="erro";NEARCP.pos=gps.pos.slice();NEARCP.t=Date.now()-14*60e3;return true}
   finally{NEARCP.busy=false}
 }
 
