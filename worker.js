@@ -115,6 +115,30 @@ export default {
         return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
       }
     }
+    // Greves nos transportes (hagreve.com · "Hoje há greve?"), resumidas e guardadas 30 min
+    if (u.searchParams.get("greves") !== null) {
+      if (globalThis.__greves && Date.now() - globalThis.__greves.t < 1800000) return new Response(globalThis.__greves.body, { headers: { ...headers, "Cache-Control": "max-age=900" } });
+      try {
+        const r = await fetch("https://hagreve.com/api/v2/strikes", { headers: { "Accept": "application/json", "User-Agent": "Mozilla/5.0" }, cf: { cacheTtl: 1800, cacheEverything: true } });
+        const j = await r.json();
+        const arr = Array.isArray(j) ? j : (j.strikes || j.results || j.data || []);
+        const txt = (v, n) => String(v == null ? "" : v).replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim().slice(0, n);
+        const L = arr.map(x => ({
+          empresa: txt((x.company && (x.company.name || x.company)) || x.company_name || "", 80),
+          desc: txt(x.description || "", 400),
+          ini: txt(x.start_date || x.startDate || "", 25),
+          fim: txt(x.end_date || x.endDate || "", 25),
+          dia: !!(x.all_day ?? x.allDay),
+          cancelada: !!(x.canceled ?? x.cancelled),
+          fonte: /^https:\/\//.test(String(x.source_link || x.sourceLink || "")) ? txt(x.source_link || x.sourceLink, 300) : ""
+        })).filter(x => x.ini && !x.cancelada).slice(0, 60);
+        const body = JSON.stringify({ ok: true, greves: L });
+        globalThis.__greves = { t: Date.now(), body };
+        return new Response(body, { headers: { ...headers, "Cache-Control": "max-age=900" } });
+      } catch (e) {
+        return new Response(JSON.stringify({ ok: false, erro: String(e.message || e) }), { status: 502, headers });
+      }
+    }
     const p = u.searchParams.get("p");
     if (p && PROXY[p]) {
       const path = u.searchParams.get("u") || "";

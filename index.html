@@ -389,8 +389,10 @@ async function cpBoard(id,nome){
     let m=toMin(t);if(m<nm-360)m+=1440;
     const num=String(x.NComboio1||x.NComboio||"");
     const obs=String(x.Observacoes||"").trim();
-    const atraso=/atras/i.test(obs)?+((obs.match(/(\d+)\s*min/)||[])[1]||0):0;
-    const sup=/suprim/i.test(obs);
+    // atraso real: a IP diz "Hora Prevista:HH:MM" (ou "Atraso de N min")
+    const prevT=(obs.match(/prev\w*\D{0,6}(\d\d:\d\d)/i)||[])[1];
+    let atraso=0;if(prevT){let pm=toMin(prevT);if(pm<m-360)pm+=1440;atraso=Math.max(0,Math.round(pm-m))}else if(/atras/i.test(obs))atraso=+((obs.match(/(\d+)\s*min/)||[])[1]||0);
+    const sup=/suprim|cancelad/i.test(obs);
     const op=String(x.Operador||"").toUpperCase();
     const serv=op.includes("FERTAGUS")?"Fertagus":(SERV[String(x.TipoServico||"").toUpperCase()]||x.TipoServico||"");
     const r={t,m,real:m+atraso,dest:destN,ori:oriN,num,obs,atraso,sup,serv,op,passou:!!x.ComboioPassou,tipo:x._tipo};
@@ -434,7 +436,10 @@ function cpRowsHTML(b,max=12,filtro="",aberto=""){
   const nm=nowMin();let L=b.L,fora=0;
   if(filtro){L=L.filter(r=>{const c=chegaA(r,filtro);if(c===false){fora++;return false}return c!=="?"})}
   if(!L.length)return `<div class="empty">Sem comboios nas próximas 4 horas${filtro?" que parem em "+esc(filtro):""}.</div>`;
-  return L.slice(0,max).map(r=>{const d=r.real-nm;
+  // resumo: suprimidos e atrasos nos próximos comboios
+  const V=L.slice(0,Math.max(max,8)),nS=V.filter(r=>r.sup).length,A=V.filter(r=>!r.sup&&r.atraso>=1),mx=A.reduce((a,r)=>Math.max(a,r.atraso),0);
+  const resumo=nS||A.length?`<div style="margin:2px 0 6px;padding:7px 10px;border-radius:10px;background:rgba(255,80,80,.12);font-size:13px;font-weight:600">⚠️ ${[nS?`<span class="bad">${nS} suprimido${nS>1?"s":""}</span>`:"",A.length?`<span class="late">${A.length} com atraso (até +${mx} min)</span>`:""].filter(Boolean).join(" · ")}</div>`:"";
+  return resumo+L.slice(0,max).map(r=>{const d=r.real-nm;
     const st=r.sup?`<b class="bad">Suprimido</b>`:r.atraso?`<span class="late">+${r.atraso} min · parte ${fmtMin(r.real)}</span>`:"";
     const ch=filtro?chegaA(r,filtro):null;
     const chH=typeof ch==="number"&&!r.sup?`<div style="margin-top:3px;font-size:14px;color:var(--g);font-weight:600">→ ${esc(filtro)} às ${fmtMin(ch)} <span class="sub">${ch>r.real?`· ${Math.round(ch-r.real)} min de viagem `:""}· chegas daqui a ${Math.max(0,Math.round(ch-nm))} min</span></div>`:"";
@@ -442,7 +447,7 @@ function cpRowsHTML(b,max=12,filtro="",aberto=""){
     const lista=open?(r.stops?`<div style="margin:6px 0 4px 64px;border-left:3px solid var(--line);padding-left:10px">${r.stops.map(s=>{const k=norm(s.nome)===norm(filtro);let m=toMin(s.prev||s.t);if(m<r.m-60)m+=1440;const real=s.prev?m:m+r.atraso;
         return `<div class="tap" data-stop="${esc(s.nome)}" style="display:flex;gap:10px;padding:5px 0;font-size:14px;${k?"color:var(--g);font-weight:700":""}"><span style="font-variant-numeric:tabular-nums;min-width:44px">${fmtMin(real)}</span><span style="flex:1">${esc(s.nome)}</span>${r.atraso&&!s.prev?`<span class="sub">${esc(s.t)}</span>`:""}</div>`}).join("")}<div class="sub" style="font-size:11px">Toca numa estação para a escolheres como destino.</div></div>`:`<div class="sub" style="margin:4px 0 6px 64px">${r.stopsErr?"Não consegui obter as paragens deste comboio.":"A carregar paragens…"}</div>`):"";
     return `<div class="row tap" data-train="${esc(r.num)}" style="${r.sup?"opacity:.6":""};flex-wrap:wrap"><span class="t">${esc(r.t)}</span>
-      <span class="m">→ <b>${esc(r.dest)}</b><small>${esc(r.serv)}${r.num?" "+esc(r.num):""}${st?" · "+st:""}${!r.sup&&!r.atraso&&r.obs?" · "+esc(r.obs):""}</small>${chH}</span>
+      <span class="m">→ <b>${esc(r.dest)}</b><small>${esc(r.serv)}${r.num?" "+esc(r.num):""}${st?" · "+st:""}${!r.sup&&!r.atraso&&r.obs?(/prev/i.test(r.obs)?` · <span class="ok">a horas</span>`:" · "+esc(r.obs)):""}</small>${chH}</span>
       <span class="in">${r.sup?"":d<1?"a sair":d<90?Math.round(d)+" min":""}<small>${open?"▴":"▾"}</small></span>${lista?`<div style="flex-basis:100%">${lista}</div>`:""}</div>`}).join("")+(fora?`<div class="sub" style="padding:6px 4px">${fora} ${fora===1?"comboio não para":"comboios não param"} em ${esc(filtro)}.</div>`:"");
 }
 
@@ -756,8 +761,39 @@ function rvCartao(){
     ${L.dep?`<div class="sub" style="margin-top:8px">Autocarro das ${esc(L.dep)}${L.atraso!=null&&L.atraso>1?` · <span class="late">+${L.atraso} min</span>`:L.atraso!=null&&L.atraso<-1?` · <span class="ok">${L.atraso} min</span>`:""}${L.motivo?" · "+esc(L.motivo):""}</div>`:L.motivo?`<div class="sub" style="margin-top:8px">${esc(L.motivo)}</div>`:""}
   </a>`;
 }
+// ---- Greves nos transportes (fonte: hagreve.com, via Worker)
+const GREVES={L:(ls.get("tp_greves",null)||{}).L||null,t:(ls.get("tp_greves",null)||{}).t||0,busy:false};
+const GREVE_REL=/\b(cp|comboios|metro|carris|fertagus|transtejo|soflusa|ttsl|infraestruturas|ip\b|tml|rodovi|barraqueiro|vimeca|scotturb|tst|sulf|mts|geral|ferrovi|transportes|stcp)/i;
+const dataGreve=s=>{const m=String(s||"").match(/(\d{4})-(\d\d)-(\d\d)[ T](\d\d):(\d\d)/)||String(s||"").match(/(\d{4})-(\d\d)-(\d\d)/);if(!m)return null;return new Date(+m[1],+m[2]-1,+m[3],+(m[4]||0),+(m[5]||0))};
+async function grevesCarregar(forcar){
+  if(GREVES.busy||(!forcar&&GREVES.L&&Date.now()-GREVES.t<30*60e3))return false;
+  GREVES.busy=true;
+  try{const j=await getJSON(W()+"/?greves=1",12000);if(!j||!Array.isArray(j.greves))return false;
+    GREVES.L=j.greves;GREVES.t=Date.now();ls.set("tp_greves",{L:GREVES.L,t:GREVES.t});return true}
+  catch(e){return false}finally{GREVES.busy=false}
+}
+function grevesAgora(){
+  if(!GREVES.L)return[];const now=new Date(),hoje0=new Date(now.getFullYear(),now.getMonth(),now.getDate()),am0=new Date(hoje0.getTime()+864e5),dep=new Date(hoje0.getTime()+2*864e5);
+  return GREVES.L.map(g=>{const a=dataGreve(g.ini);let b=dataGreve(g.fim)||a;if(!a)return null;
+      if(g.dia||!/\d\d:\d\d/.test(g.fim||"")){b=new Date(b.getFullYear(),b.getMonth(),b.getDate(),23,59)}
+      return{...g,a,b}})
+    .filter(g=>g&&!g.cancelada&&g.b>=now&&g.a<dep&&GREVE_REL.test(g.empresa+" "+g.desc))
+    .map(g=>({...g,quando:g.a<=now?"a decorrer":g.a<am0?"hoje":"amanhã"}))
+    .sort((x,y)=>x.a-y.a).slice(0,5);
+}
+function grevesHTML(){
+  const G=grevesAgora();if(!G.length)return"";
+  const hmD=d=>String(d.getHours()).padStart(2,"0")+":"+String(d.getMinutes()).padStart(2,"0");
+  const per=g=>g.dia||(hmD(g.a)==="00:00"&&hmD(g.b)==="23:59")?(g.a.toDateString()===g.b.toDateString()?"todo o dia":`até ${g.b.getDate()}/${g.b.getMonth()+1}`):g.a.toDateString()===g.b.toDateString()?`${hmD(g.a)}–${hmD(g.b)}`:`${hmD(g.a)} até ${g.b.getDate()}/${g.b.getMonth()+1} ${hmD(g.b)}`;
+  return `<div class="card" style="border:2px solid var(--red)"><div class="lbl" style="color:var(--red)">✊ Greves nos transportes</div>${G.map(g=>`<div style="padding:8px 0;border-top:1px solid var(--line)">
+    <div><b>${esc(g.empresa||"Greve")}</b> <span class="${g.quando==="amanhã"?"late":"bad"}" style="font-weight:700">· ${g.quando==="a decorrer"?"a decorrer agora":g.quando}</span> <span class="sub">· ${esc(per(g))}</span></div>
+    ${g.desc?`<div class="sub" style="font-size:13px;margin-top:3px">${esc(g.desc.length>220?g.desc.slice(0,217)+"…":g.desc)}</div>`:""}
+    ${g.fonte?`<a href="${esc(g.fonte)}" target="_blank" rel="noopener noreferrer" class="sub" style="font-size:12px">Ver fonte ›</a>`:""}</div>`).join("")}
+    <div class="sub" style="font-size:11px;margin-top:4px">Fonte: hagreve.com. Comboios suprimidos aparecem nas partidas como “Suprimido”.</div></div>`;
+}
 function vPerto(){
-  let h=`<h2>Perto de ti</h2><div id="rvLive"></div><div id="gpsPill" class="card tap" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer"></div>
+  grevesCarregar().then(m=>{const el=document.getElementById("greves");if(m&&el)el.innerHTML=grevesHTML()});
+  let h=`<h2>Perto de ti</h2><div id="greves">${grevesHTML()}</div><div id="rvLive"></div><div id="gpsPill" class="card tap" style="display:flex;align-items:center;gap:10px;padding:10px 14px;cursor:pointer"></div>
   <div id="gpsHelp" class="card sub" style="display:none;line-height:1.6;color:var(--txt)"><b>Para dar a localização à app:</b><br>1. Definições → Privacidade e segurança → Serviços de localização → ligados.<br>2. Na mesma página: <b>Sites do Safari</b> → <b>Durante a utilização</b>, com “Localização exata” ligada.<br>3. Se usas a app pelo ecrã principal, fecha-a e abre de novo; no Safari, toca em <b>aA</b> → Definições do site → Localização → <b>Permitir</b>.</div>`;
   const fl=favs.slice();
   if(fl.length)h+=`<div class="lbl" style="margin:4px 2px 8px">⭐ Favoritos</div>`+fl.map(f=>cardShell(f,f.extra)).join("");
@@ -1257,7 +1293,7 @@ function vDef(){
 document.addEventListener("click",e=>{const o=e.target.closest("[data-open]");if(!o)return;try{state.board=JSON.parse(o.dataset.open);render()}catch(err){}});
 $("#tabs").onclick=e=>{const b=e.target.closest("button");if(!b)return;state.tab=b.dataset.t;state.board=null;ls.set("tp_tab",state.tab);render();window.scrollTo(0,0)};
 document.addEventListener("visibilitychange",()=>{if(!document.hidden)render()});
-$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Localização das estações de comboio: © colaboradores do OpenStreetMap · Trânsito: © TomTom · Tempo: IPMA e Open-Meteo.<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
+$("#foot").innerHTML=`<b>App não oficial</b>, sem ligação a nenhum operador.<br>Dados: Metro de Lisboa · Infraestruturas de Portugal (CP, Fertagus) · Carris · Carris Metropolitana (TML) · Rodoviária do Oeste<br>Localização das estações de comboio: © colaboradores do OpenStreetMap · Trânsito: © TomTom · Tempo: IPMA e Open-Meteo · Greves: hagreve.com.<br>Horários e tempos são indicativos; confirma sempre junto do operador.`;
 $("#defBtn").onclick=()=>{state.board=null;state.tab="def";ls.set("tp_tab","def");render();window.scrollTo(0,0)};
 startGPS();
 loadMetroStations().then(()=>{if(!state.board&&(state.tab==="metro"||state.tab==="perto"))render()});
